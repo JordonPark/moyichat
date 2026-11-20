@@ -13,6 +13,7 @@ class ChatTask {
     required this.messages,
     this.name,
     this.parentId,
+    this.responseStyle,
   });
 
   factory ChatTask.create({String? parentId}) => ChatTask(
@@ -26,6 +27,7 @@ class ChatTask {
   final List<ChatMessage> messages;
   final String? parentId;
   String? name;
+  String? responseStyle;
 
   String get title =>
       name ??
@@ -40,6 +42,7 @@ class ChatTask {
     'messages': messages.map((message) => message.toJson()).toList(),
     'name': ?name,
     'parentId': ?parentId,
+    'responseStyle': ?responseStyle,
   };
 
   factory ChatTask.fromJson(Map<String, Object?> value) => ChatTask(
@@ -47,6 +50,7 @@ class ChatTask {
     messages: _decodeMessages(value['messages'] as List<dynamic>),
     name: value['name'] as String?,
     parentId: value['parentId'] as String?,
+    responseStyle: value['responseStyle'] as String?,
   );
 }
 
@@ -57,6 +61,7 @@ class ChatWorkspace {
     this.assistantName = defaultAssistantName,
     this.generationSize,
     this.assistantAvatar,
+    this.responseStyle,
   });
 
   final String activeId;
@@ -64,6 +69,7 @@ class ChatWorkspace {
   final String assistantName;
   final GenerationSize? generationSize;
   final String? assistantAvatar;
+  final String? responseStyle;
 
   Map<String, Object> toJson() => {
     'activeId': activeId,
@@ -71,6 +77,7 @@ class ChatWorkspace {
     'assistantName': assistantName,
     'generationSize': ?generationSize?.name,
     'assistantAvatar': ?assistantAvatar,
+    'responseStyle': ?responseStyle,
   };
 
   factory ChatWorkspace.fromJson(Object? value) {
@@ -86,6 +93,7 @@ class ChatWorkspace {
       activeId: data['activeId'] as String,
       assistantName: data['assistantName'] as String? ?? defaultAssistantName,
       assistantAvatar: data['assistantAvatar'] as String?,
+      responseStyle: data['responseStyle'] as String?,
       generationSize: GenerationSize.values
           .where((size) => size.name == data['generationSize'])
           .firstOrNull,

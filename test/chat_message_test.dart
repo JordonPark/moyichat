@@ -54,6 +54,7 @@ void main() {
     'workspace retains hierarchy, assistant name, and manual generation size',
     () {
       final parent = ChatTask.create();
+      parent.responseStyle = '세 줄로 요약해 줘.';
       final child = ChatTask.create(parentId: parent.id);
       final workspace = ChatWorkspace(
         activeId: child.id,
@@ -61,6 +62,7 @@ void main() {
         assistantName: '루나',
         generationSize: GenerationSize.small,
         assistantAvatar: 'profile-png',
+        responseStyle: '존댓말을 써 줘.',
       );
       final restored = ChatWorkspace.fromJson(workspace.toJson());
 
@@ -69,6 +71,9 @@ void main() {
       expect(restored.assistantName, '루나');
       expect(restored.generationSize, GenerationSize.small);
       expect(restored.assistantAvatar, 'profile-png');
+      expect(restored.responseStyle, '존댓말을 써 줘.');
+      expect(restored.tasks.first.responseStyle, '세 줄로 요약해 줘.');
+      expect(restored.tasks.last.responseStyle, isNull);
     },
   );
 

@@ -10,6 +10,7 @@ Kanana 1.5 2.1B Instruct(2505)를 기기에서 실행하는 한국어 AI 앱이�
 4. **작업 메뉴**에서 대화를 만들거나 이름을 바꾸고, 저장된 메시지를 검색할 수 있다. 하위 작업은 상위 작업의 최근 대화를 참고한다. 대화는 상위·하위 두 단계까지 만들 수 있다.
 5. 도우미 이름은 기본적으로 **모이챗**이다. “앞으로 너를 루나라고 부를게”처럼 대화로 바꾸면 다른 작업에서도 새 이름을 쓴다. “프로필 사진 바꿔줘”라고 보내거나 **사용자 설정 → 사진 바꾸기**에서 도우미 사진을 정할 수 있다.
 6. **사용자 설정**에서 기기에 맞는 자동 처리량을 쓰거나 **작게 · 보통 · 많음**을 직접 고른다. 사진 OCR과 분류 후보도 입력 토큰으로 계산된다. 위험 요청의 일부는 로컬 규칙으로 처리하고, 모델에는 사진과 상위 대화를 참고 자료로 다루는 안전 지침을 적용한다.
+7. **사용자 설정 → 내 AI의 답변 방식**에서 역할, 말투와 답변 형식을 직접 적는다. 작업 목록의 **답변 방식 설정**을 사용하면 작업마다 다르게 정할 수 있다. 하위 작업에 별도 설정이 없으면 상위 작업의 설정을 쓰고, 상위 작업에도 없으면 기본 방식을 쓴다. 이 설정과 대화는 기기에 저장된다.
 
 사진 분석은 Kanana 파일을 받기 전에도 쓸 수 있다. Kanana는 이미지에서 나온 텍스트와 분류 후보를 받아 설명을 만든다. 모델을 받은 뒤에는 비행기 모드에서도 로컬 사진 분석과 채팅이 가능하도록 구성했다.
 
@@ -29,7 +30,9 @@ flutter run -d chrome
 
 ### Android와 iOS
 
-Flutter 3.50.1에서 작업했다. Android 빌드에는 Android SDK 36과 JDK가 필요하다. iOS에는 macOS와 Xcode가 필요하며, 프로젝트의 최소 배포 대상은 iOS 16.4다. iOS의 llama.cpp XCFramework는 Swift Package Manager로 연결한다.
+Flutter 3.50.1에서 작업했다. Android 빌드에는 Android SDK 36과 JDK가 필요하다. iOS 빌드에는 macOS와 Xcode 27.1 이상의 SDK가 필요하며, 프로젝트의 최소 배포 대상은 iOS 16.4다. iOS의 llama.cpp XCFramework는 Swift Package Manager로 연결한다.
+
+폴더블 화면은 열려 있는 창의 가용 너비와 안전 영역에 맞춰 배치한다. 좁은 화면에는 채팅과 작업 메뉴를, 넓은 화면에는 작업 목록과 채팅을 함께 보여준다. iPhone Duo에서는 UIKit의 크기 클래스와 세로 도구 모음 위치를 따르며, Galaxy Z Fold에서는 Android의 접힘 영역을 기준으로 작업 목록과 채팅 또는 대화와 입력창을 나눈다. [Apple iPhone Duo 개발 가이드](https://developer.apple.com/iphone-duo/prepare/) · [Samsung 폴더블 디자인 가이드](https://developer.samsung.com/one-ui/largescreen-and-foldable/designing_for_foldable.html)
 
 ```sh
 flutter pub get

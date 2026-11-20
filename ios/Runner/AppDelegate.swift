@@ -5,6 +5,8 @@ import os
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
+  private(set) var layoutChannel: FlutterMethodChannel?
+
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
@@ -14,6 +16,21 @@ import os
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    let layout = FlutterMethodChannel(
+      name: "moyichat/layout",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    layoutChannel = layout
+    layout.setMethodCallHandler { call, result in
+      guard call.method == "currentLayout" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      let controller = UIApplication.shared.connectedScenes
+        .compactMap { ($0 as? UIWindowScene)?.keyWindow?.rootViewController as? MoyiViewController }
+        .first
+      result(controller?.workspaceLayout)
+    }
     let device = FlutterMethodChannel(
       name: "moyichat/device",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()

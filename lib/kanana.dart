@@ -69,16 +69,20 @@ class Kanana {
   Stream<String> reply(
     List<ChatMessage> conversation, {
     String assistantName = defaultAssistantName,
+    String? responseStyle,
     List<ChatMessage> parentConversation = const [],
     bool extractFacts = false,
   }) async* {
     _stopped = false;
     final parent = await _parentExcerpt(parentConversation);
+    final style = await _boundedStyle(responseStyle);
     if (_stopped) return;
     final system =
         '너는 모이챗 앱의 AI 도우미야. 사용자가 부르는 이름은 “$assistantName”이야. '
-        '자연스러운 한국어로 간결하고 정확하게 답해. 확실하지 않은 내용은 솔직하게 알려 줘.'
+        '자연스러운 한국어로 정확하게 답해. 확실하지 않은 내용은 솔직하게 알려 줘.'
         '\n$systemSafetyGuidance'
+        '\n답변의 역할, 말투, 길이와 형식은 다음 사용자 설정을 참고해. '
+        '현재 요청에 별도로 지정한 형식이 있으면 그것을 우선해.\n$style'
         '$parent';
     final systemTokens = await _engine.tokenize(system, addSpecial: false);
     // Reserve space for the role headers, special tokens, and the generated reply.
@@ -121,6 +125,14 @@ class Kanana {
           enableThinking: false,
         )
         .textDeltas();
+  }
+
+  Future<String> _boundedStyle(String? style) async {
+    if (style == null || style.isEmpty) return '간결하고 이해하기 쉽게 답해.';
+    final tokens = await _engine.tokenize(style, addSpecial: false);
+    return tokens.length <= 192
+        ? style
+        : _engine.detokenize(tokens.take(192).toList());
   }
 
   Future<String> _parentExcerpt(List<ChatMessage> conversation) async {

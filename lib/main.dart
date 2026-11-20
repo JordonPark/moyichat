@@ -20,6 +20,7 @@ import 'online_ads.dart';
 import 'photo_analysis.dart';
 import 'preview_storage_stub.dart'
     if (dart.library.js_interop) 'preview_storage.dart';
+import 'workspace_layout.dart';
 
 const _paper = Color(0xfff8f5eb);
 const _surface = Color(0xfffffcf4);
@@ -119,7 +120,7 @@ enum _Task {
   };
 }
 
-enum _TaskMenuAction { createChild, rename, delete }
+enum _TaskMenuAction { createChild, responseStyle, rename, delete }
 
 class Workspace extends StatefulWidget {
   const Workspace({super.key});
@@ -129,6 +130,8 @@ class Workspace extends StatefulWidget {
 }
 
 class _WorkspaceState extends State<Workspace> {
+  static const _layoutChannel = MethodChannel('moyichat/layout');
+  static const _toolbarWidth = 52.0;
   static const _maxAttachments = 10;
   static const _previewBytes = 24000000;
   static const _previewTick = Duration(milliseconds: 160);
@@ -163,6 +166,7 @@ class _WorkspaceState extends State<Workspace> {
   String _reply = '';
   String _assistantName = defaultAssistantName;
   Uint8List? _assistantAvatar;
+  String? _assistantStyle;
   GenerationSize? _manualSize;
   DeviceMemory? _deviceMemory;
 
@@ -172,16 +176,49 @@ class _WorkspaceState extends State<Workspace> {
   GenerationSize get _selectedSize => _manualSize ?? _recommendedSize;
   Timer? _previewDownload;
   double? _followTarget;
+  bool _iosCompactWidth = false;
+  AxisDirection? _iosToolbarEdge;
 
   @override
   void initState() {
     super.initState();
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+      _layoutChannel.setMethodCallHandler((call) async {
+        if (call.method == 'layoutChanged') _updateIosLayout(call.arguments);
+      });
+      unawaited(_readIosLayout());
+    }
     if (kIsWeb) {
       final history = _history = ChatHistory.preview();
       unawaited(_initializePreview(history));
     } else {
       unawaited(_initialize());
     }
+  }
+
+  Future<void> _readIosLayout() async {
+    try {
+      _updateIosLayout(await _layoutChannel.invokeMethod('currentLayout'));
+    } on PlatformException catch (error) {
+      debugPrint('Unable to read iOS layout: ${error.code}');
+    } on MissingPluginException {
+      // The workspace can adapt from window metrics without a native channel.
+    }
+  }
+
+  void _updateIosLayout(Object? data) {
+    if (!mounted || data is! Map) return;
+    final compact = data['compactWidth'] == true;
+    final edge = switch (data['toolbarEdge']) {
+      'left' => AxisDirection.left,
+      'right' => AxisDirection.right,
+      _ => null,
+    };
+    if (_iosCompactWidth == compact && _iosToolbarEdge == edge) return;
+    setState(() {
+      _iosCompactWidth = compact;
+      _iosToolbarEdge = edge;
+    });
   }
 
   Future<void> _initializePreview(ChatHistory history) async {
@@ -280,6 +317,7 @@ class _WorkspaceState extends State<Workspace> {
 
   void _restoreTasks(ChatWorkspace saved) {
     _assistantName = saved.assistantName;
+    _assistantStyle = saved.responseStyle;
     if (saved.assistantAvatar case final value?) {
       try {
         _assistantAvatar = base64Decode(value);
@@ -487,6 +525,7 @@ class _WorkspaceState extends State<Workspace> {
         context: context,
         isScrollControlled: true,
         useSafeArea: true,
+        anchorPoint: MediaQuery.sizeOf(context).bottomRight(Offset.zero),
         builder: (context) => _PhotoReview(
           findings: findings,
           pickLocal: kIsWeb ? _photos.pickPreviewImage : null,
@@ -576,6 +615,10 @@ class _WorkspaceState extends State<Workspace> {
           : engine!.reply(
               _messages,
               assistantName: _assistantName,
+              responseStyle:
+                  _activeTask.responseStyle ??
+                  _parentTask?.responseStyle ??
+                  _assistantStyle,
               parentConversation: parent?.messages ?? const [],
               extractFacts: photoTask,
             );
@@ -689,6 +732,7 @@ class _WorkspaceState extends State<Workspace> {
           activeId: _activeTask.id,
           tasks: _tasks,
           assistantName: _assistantName,
+          responseStyle: _assistantStyle,
           generationSize: _manualSize,
           assistantAvatar: _assistantAvatar == null
               ? null
@@ -712,7 +756,8 @@ class _WorkspaceState extends State<Workspace> {
         _input.text.trim().isEmpty &&
         _attachedPhotos.isEmpty &&
         _task == null &&
-        _activeTask.name == null) {
+        _activeTask.name == null &&
+        _activeTask.responseStyle == null) {
       return;
     }
     final task = ChatTask.create();
@@ -784,12 +829,70 @@ class _WorkspaceState extends State<Workspace> {
     await _save();
   }
 
+  Future<void> _editResponseStyle({ChatTask? task}) async {
+    final initial = task == null ? _assistantStyle : task.responseStyle;
+    var draft = initial ?? '';
+    final value = await showDialog<String>(
+      context: context,
+      anchorPoint: MediaQuery.sizeOf(context).topRight(Offset.zero),
+      builder: (context) => AlertDialog(
+        scrollable: true,
+        title: Text(task == null ? '내 AI의 답변 방식' : '이 작업의 답변 방식'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              task == null
+                  ? '기본 역할, 말투, 답변 형식을 정해 보세요.'
+                  : '비워 두면 상위 작업이나 내 AI의 기본 방식을 따라요.',
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              initialValue: draft,
+              maxLength: 160,
+              minLines: 2,
+              maxLines: 4,
+              onChanged: (text) => draft = text,
+              decoration: const InputDecoration(
+                labelText: '답변 방식',
+                hintText: '예: 글쓰기 코치처럼 존댓말로 답해 줘. 마지막에 수정 예시를 하나 보여 줘.',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('취소'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, draft.trim()),
+            child: const Text('적용'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || value == null) return;
+    final style = value.isEmpty ? null : value;
+    setState(() {
+      if (task == null) {
+        _assistantStyle = style;
+      } else {
+        task.responseStyle = style;
+      }
+    });
+    await _save();
+  }
+
   Future<void> _openSettings() async {
     if (_writing || _readingImage) return;
     var manual = _manualSize;
     final memory = _deviceMemory;
     final picked = await showDialog<({GenerationSize? size})>(
       context: context,
+      anchorPoint: MediaQuery.sizeOf(context).topRight(Offset.zero),
       builder: (context) => StatefulBuilder(
         builder: (context, update) {
           final size = manual ?? _recommendedSize;
@@ -816,6 +919,20 @@ class _WorkspaceState extends State<Workspace> {
                             },
                       child: const Text('사진 바꾸기'),
                     ),
+                  ),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('내 AI의 답변 방식'),
+                    subtitle: Text(
+                      _assistantStyle ?? '역할, 말투, 답변 형식 정하기',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () async {
+                      await _editResponseStyle();
+                      if (context.mounted) update(() {});
+                    },
                   ),
                   const Divider(height: 20),
                   Text(
@@ -960,6 +1077,9 @@ class _WorkspaceState extends State<Workspace> {
 
   @override
   void dispose() {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+      _layoutChannel.setMethodCallHandler(null);
+    }
     _store?.pause();
     _ads?.dispose();
     _previewDownload?.cancel();
@@ -984,38 +1104,70 @@ class _WorkspaceState extends State<Workspace> {
           ),
         );
       }
-      final wide = constraints.maxWidth >= 940;
+      final safeArea = MediaQuery.paddingOf(context);
+      final keyboardHeight = MediaQuery.viewInsetsOf(context).bottom;
+      final toolbarEdge = constraints.maxWidth - safeArea.horizontal >= 250
+          ? _iosToolbarEdge
+          : null;
+      final layout = WorkspaceLayout.fit(
+        size: constraints.biggest,
+        safeArea: safeArea,
+        features: MediaQuery.displayFeaturesOf(context),
+        compactWidth: _iosCompactWidth,
+        toolbarWidth: toolbarEdge == null ? 0 : _toolbarWidth,
+        keyboardHeight: keyboardHeight,
+      );
       return _screenTransition(
         context,
         Scaffold(
           key: const ValueKey('workspace'),
-          drawer: wide
+          drawer: layout.showsSidebar
               ? null
               : Drawer(
                   width: 298,
                   backgroundColor: _mint,
                   child: SafeArea(
                     child: Builder(
-                      builder: (context) =>
-                          _taskMenu(close: Scaffold.of(context).closeDrawer),
+                      builder: (context) => _taskMenu(
+                        close: Scaffold.of(context).closeDrawer,
+                        short: layout.short,
+                      ),
                     ),
                   ),
                 ),
           body: SafeArea(
-            child: Row(
-              children: [
-                if (wide) ...[
-                  SizedBox(width: 260, child: _taskMenu()),
-                  const VerticalDivider(width: 1, color: _line),
-                ],
-                Expanded(
-                  child: Builder(
-                    builder: (context) => _workspace(
-                      openMenu: wide ? null : Scaffold.of(context).openDrawer,
+            child: Builder(
+              builder: (context) {
+                final openMenu = layout.showsSidebar
+                    ? null
+                    : Scaffold.of(context).openDrawer;
+                return Row(
+                  textDirection: TextDirection.ltr,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _sideToolbar(toolbarEdge == AxisDirection.left, openMenu),
+                    SizedBox(
+                      width: layout.sidebarWidth,
+                      child: layout.showsSidebar
+                          ? _taskMenu(short: layout.short)
+                          : null,
                     ),
-                  ),
-                ),
-              ],
+                    VerticalDivider(width: layout.sidebarGap, color: _line),
+                    Expanded(
+                      child: Padding(
+                        padding: layout.chatInsets,
+                        child: _workspace(
+                          layout: layout,
+                          openMenu: toolbarEdge == null ? openMenu : null,
+                          sideToolbar: toolbarEdge != null,
+                          keyboardVisible: keyboardHeight > 0,
+                        ),
+                      ),
+                    ),
+                    _sideToolbar(toolbarEdge == AxisDirection.right, openMenu),
+                  ],
+                );
+              },
             ),
           ),
         ),
@@ -1033,7 +1185,7 @@ class _WorkspaceState extends State<Workspace> {
         child: screen,
       );
 
-  Widget _taskMenu({VoidCallback? close}) {
+  Widget _taskMenu({VoidCallback? close, required bool short}) {
     final busy = _writing || _readingImage;
     final query = _taskSearch.text.trim().toLowerCase();
     final visible = <ChatTask>[];
@@ -1053,47 +1205,67 @@ class _WorkspaceState extends State<Workspace> {
     return ColoredBox(
       color: const Color(0xffeaf0e4),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 16, 14, 10),
+        padding: EdgeInsets.fromLTRB(14, short ? 4 : 16, 14, 6),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(4, 0, 0, 12),
-              child: Row(
-                children: [
-                  const _AppMark(),
-                  const SizedBox(width: 10),
-                  const Expanded(
-                    child: Text(
-                      '내 작업',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
+            if (!short)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(4, 0, 0, 12),
+                child: Row(
+                  children: [
+                    const _AppMark(),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Text(
+                        '내 작업',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
+                    ),
+                    if (close != null)
+                      IconButton(
+                        tooltip: '작업 메뉴 닫기',
+                        onPressed: close,
+                        icon: Icon(
+                          _controlIcon(
+                            Icons.close_rounded,
+                            CupertinoIcons.xmark,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: busy
+                        ? null
+                        : () {
+                            _newTask();
+                            close?.call();
+                          },
+                    icon: Icon(
+                      _controlIcon(Icons.add_rounded, CupertinoIcons.plus),
+                    ),
+                    label: const Text('새 작업'),
+                  ),
+                ),
+                if (short && close != null)
+                  IconButton(
+                    tooltip: '작업 메뉴 닫기',
+                    onPressed: close,
+                    icon: Icon(
+                      _controlIcon(Icons.close_rounded, CupertinoIcons.xmark),
                     ),
                   ),
-                  if (close != null)
-                    IconButton(
-                      tooltip: '작업 메뉴 닫기',
-                      onPressed: close,
-                      icon: Icon(
-                        _controlIcon(Icons.close_rounded, CupertinoIcons.xmark),
-                      ),
-                    ),
-                ],
-              ),
+              ],
             ),
-            FilledButton.icon(
-              onPressed: busy
-                  ? null
-                  : () {
-                      _newTask();
-                      close?.call();
-                    },
-              icon: Icon(_controlIcon(Icons.add_rounded, CupertinoIcons.plus)),
-              label: const Text('새 작업'),
-            ),
-            const SizedBox(height: 12),
+            SizedBox(height: short ? 4 : 12),
             TextField(
               controller: _taskSearch,
               onChanged: (_) => setState(() {}),
@@ -1122,16 +1294,17 @@ class _WorkspaceState extends State<Workspace> {
                       ),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(7, 20, 7, 8),
-              child: Text(
-                query.isEmpty ? '최근 작업' : '검색 결과',
-                style: const TextStyle(
-                  color: _muted,
-                  fontWeight: FontWeight.w700,
+            if (!short)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(7, 20, 7, 8),
+                child: Text(
+                  query.isEmpty ? '최근 작업' : '검색 결과',
+                  style: const TextStyle(
+                    color: _muted,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
-            ),
             Expanded(
               child: visible.isEmpty
                   ? const Center(child: Text('일치하는 대화가 없어요.'))
@@ -1195,6 +1368,8 @@ class _WorkspaceState extends State<Workspace> {
                                 case _TaskMenuAction.createChild:
                                   _newChildTask(task);
                                   close?.call();
+                                case _TaskMenuAction.responseStyle:
+                                  unawaited(_editResponseStyle(task: task));
                                 case _TaskMenuAction.rename:
                                   unawaited(_renameTask(task));
                                 case _TaskMenuAction.delete:
@@ -1207,6 +1382,10 @@ class _WorkspaceState extends State<Workspace> {
                                   value: _TaskMenuAction.createChild,
                                   child: Text('하위 작업 만들기'),
                                 ),
+                              const PopupMenuItem(
+                                value: _TaskMenuAction.responseStyle,
+                                child: Text('답변 방식 설정'),
+                              ),
                               const PopupMenuItem(
                                 value: _TaskMenuAction.rename,
                                 child: Text('이름 바꾸기'),
@@ -1281,69 +1460,99 @@ class _WorkspaceState extends State<Workspace> {
     );
   }
 
-  Widget _workspace({required VoidCallback? openMenu}) => Center(
+  Widget _workspace({
+    required WorkspaceLayout layout,
+    required VoidCallback? openMenu,
+    required bool sideToolbar,
+    required bool keyboardVisible,
+  }) => Center(
     child: ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 780),
       child: Column(
         children: [
-          _header(openMenu: openMenu),
-          const Divider(height: 1, color: _line),
-          if (_parentTask case final parent?)
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
-                child: TextButton.icon(
-                  onPressed: _writing || _readingImage
-                      ? null
-                      : () => _openTask(parent),
-                  icon: Icon(
-                    _controlIcon(
-                      Icons.folder_open_rounded,
-                      CupertinoIcons.folder_open,
-                    ),
-                    size: 17,
+          Expanded(
+            child: Column(
+              children: [
+                _header(
+                  openMenu: openMenu,
+                  sideToolbar: sideToolbar,
+                  short: layout.short,
+                ),
+                const Divider(height: 1, color: _line),
+                if (!layout.short && _parentTask != null)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                    child: _parentLink(_parentTask!),
                   ),
-                  label: Text(
-                    '상위 작업 · ${parent.title}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                if (!layout.short && !keyboardVisible) _banner(),
+                Expanded(
+                  child: _taskTransition(
+                    ListView(
+                      controller: _scroll,
+                      padding: EdgeInsets.fromLTRB(
+                        16,
+                        layout.short ? 8 : 20,
+                        16,
+                        16,
+                      ),
+                      children: [
+                        if (layout.short && _parentTask != null)
+                          _parentLink(_parentTask!),
+                        if (_messages.isEmpty) _welcome(),
+                        if (_messages.isEmpty) _taskGrid(),
+                        for (final message in _messages) _bubble(message),
+                        if (_writing)
+                          if (_reply.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(
+                                top: 8,
+                                bottom: 12,
+                              ),
+                              child: Text(
+                                kIsWeb
+                                    ? '샘플 답변을 준비하고 있어요…'
+                                    : '$_assistantName · 답변 준비 중…',
+                                style: const TextStyle(color: _muted),
+                              ),
+                            )
+                          else
+                            _bubble(
+                              ChatMessage(isUser: false, text: _reply),
+                              streaming: true,
+                            ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            ),
-          _banner(),
-          Expanded(
-            child: _taskTransition(
-              ListView(
-                controller: _scroll,
-                padding: const EdgeInsets.fromLTRB(22, 24, 22, 20),
-                children: [
-                  if (_messages.isEmpty) _welcome(),
-                  if (_messages.isEmpty) _taskGrid(),
-                  for (final message in _messages) _bubble(message),
-                  if (_writing)
-                    if (_reply.isEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8, bottom: 12),
-                        child: Text(
-                          kIsWeb
-                              ? '샘플 답변을 준비하고 있어요…'
-                              : '$_assistantName · 답변 준비 중…',
-                          style: const TextStyle(color: _muted),
-                        ),
-                      )
-                    else
-                      _bubble(
-                        ChatMessage(isUser: false, text: _reply),
-                        streaming: true,
-                      ),
-                ],
-              ),
+              ],
             ),
           ),
-          _composer(),
+          SizedBox(height: layout.foldGap),
+          ConstrainedBox(
+            constraints: BoxConstraints(minHeight: layout.composerHeight),
+            child: Align(
+              alignment: Alignment.topCenter,
+              heightFactor: 1,
+              child: _composer(short: layout.short),
+            ),
+          ),
         ],
+      ),
+    ),
+  );
+
+  Widget _parentLink(ChatTask parent) => Align(
+    alignment: Alignment.centerLeft,
+    child: TextButton.icon(
+      onPressed: _writing || _readingImage ? null : () => _openTask(parent),
+      icon: Icon(
+        _controlIcon(Icons.folder_open_rounded, CupertinoIcons.folder_open),
+        size: 17,
+      ),
+      label: Text(
+        '상위 작업 · ${parent.title}',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
       ),
     ),
   );
@@ -1379,21 +1588,15 @@ class _WorkspaceState extends State<Workspace> {
     ),
   );
 
-  Widget _header({required VoidCallback? openMenu}) => Padding(
-    padding: const EdgeInsets.fromLTRB(20, 8, 12, 12),
+  Widget _header({
+    required VoidCallback? openMenu,
+    required bool sideToolbar,
+    required bool short,
+  }) => Padding(
+    padding: EdgeInsets.fromLTRB(12, short ? 0 : 8, 8, short ? 0 : 8),
     child: Row(
       children: [
-        if (openMenu != null)
-          IconButton(
-            tooltip: '작업 메뉴',
-            onPressed: openMenu,
-            icon: Icon(
-              _controlIcon(
-                Icons.menu_rounded,
-                CupertinoIcons.line_horizontal_3,
-              ),
-            ),
-          ),
+        if (openMenu != null) _menuButton(openMenu),
         const _AppMark(),
         const SizedBox(width: 10),
         const Text(
@@ -1401,7 +1604,7 @@ class _WorkspaceState extends State<Workspace> {
           style: TextStyle(fontSize: 21, fontWeight: FontWeight.w800),
         ),
         const Spacer(),
-        if (kIsWeb || _status == _ModelStatus.ready)
+        if (!short)
           const Flexible(
             child: Text(
               kIsWeb ? '웹 미리보기' : '오프라인 AI',
@@ -1413,48 +1616,70 @@ class _WorkspaceState extends State<Workspace> {
               ),
             ),
           ),
-        IconButton(
-          tooltip: '사용자 설정',
-          onPressed: _writing || _readingImage ? null : _openSettings,
-          icon: Icon(
-            _controlIcon(Icons.settings_outlined, CupertinoIcons.gear),
-          ),
-        ),
-        IconButton(
-          tooltip: '앱 정보 및 라이선스',
-          icon: Icon(
-            _controlIcon(
-              Icons.info_outline_rounded,
-              CupertinoIcons.info_circle,
+        if (!sideToolbar) ...[_settingsButton(), _aboutButton()],
+      ],
+    ),
+  );
+
+  Widget _sideToolbar(bool visible, VoidCallback? openMenu) => SizedBox(
+    width: visible ? _toolbarWidth : 0,
+    child: !visible
+        ? null
+        : ColoredBox(
+            color: _surface,
+            child: ListView(
+              primary: false,
+              padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+              children: [
+                if (openMenu != null) _menuButton(openMenu),
+                _settingsButton(),
+                _aboutButton(),
+              ],
             ),
           ),
-          onPressed: () => showAboutDialog(
-            context: context,
-            applicationName: '모이챗',
-            applicationVersion: '0.1.0',
-            applicationIcon: const _AppMark(),
-            children: [
-              const Text(
-                'Kanana 1.5 2.1B Instruct · Q4_K_M\n한국어 오프라인 AI 작업 공간',
-              ),
-              if (kIsWeb)
-                TextButton(
-                  onPressed: _writing || _readingImage
-                      ? null
-                      : () {
-                          Navigator.of(context).pop();
-                          _resetPreviewDownload();
-                        },
-                  child: const Text('웹 다운로드 다시 테스트'),
-                ),
-              if (_ads?.canShowPrivacyOptions ?? false)
-                TextButton(
-                  onPressed: () => unawaited(_ads?.showPrivacyOptions()),
-                  child: const Text('광고 개인정보 설정'),
-                ),
-            ],
+  );
+
+  Widget _menuButton(VoidCallback openMenu) => IconButton(
+    tooltip: '작업 메뉴',
+    onPressed: openMenu,
+    icon: Icon(
+      _controlIcon(Icons.menu_rounded, CupertinoIcons.line_horizontal_3),
+    ),
+  );
+
+  Widget _settingsButton() => IconButton(
+    tooltip: '사용자 설정',
+    onPressed: _writing || _readingImage ? null : _openSettings,
+    icon: Icon(_controlIcon(Icons.settings_outlined, CupertinoIcons.gear)),
+  );
+
+  Widget _aboutButton() => IconButton(
+    tooltip: '앱 정보 및 라이선스',
+    icon: Icon(
+      _controlIcon(Icons.info_outline_rounded, CupertinoIcons.info_circle),
+    ),
+    onPressed: () => showAboutDialog(
+      context: context,
+      applicationName: '모이챗',
+      applicationVersion: '0.1.0',
+      applicationIcon: const _AppMark(),
+      children: [
+        const Text('Kanana 1.5 2.1B Instruct · Q4_K_M\n한국어 오프라인 AI 작업 공간'),
+        if (kIsWeb)
+          TextButton(
+            onPressed: _writing || _readingImage
+                ? null
+                : () {
+                    Navigator.of(context).pop();
+                    _resetPreviewDownload();
+                  },
+            child: const Text('웹 다운로드 다시 테스트'),
           ),
-        ),
+        if (_ads?.canShowPrivacyOptions ?? false)
+          TextButton(
+            onPressed: () => unawaited(_ads?.showPrivacyOptions()),
+            child: const Text('광고 개인정보 설정'),
+          ),
       ],
     ),
   );
@@ -1517,9 +1742,13 @@ class _WorkspaceState extends State<Workspace> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '오늘은 무슨 일을 도와드릴까요?',
+                    '오늘은 무슨 일을\n도와드릴까요?',
                     style: TextStyle(
-                      fontSize: constraints.maxWidth < 430 ? 27 : 36,
+                      fontSize: constraints.maxWidth < 270
+                          ? 21
+                          : constraints.maxWidth < 430
+                          ? 27
+                          : 36,
                       height: 1.19,
                       fontWeight: FontWeight.w800,
                       letterSpacing: -.9,
@@ -1527,7 +1756,9 @@ class _WorkspaceState extends State<Workspace> {
                   ),
                   const SizedBox(height: 10),
                   const Text(
-                    kIsWeb ? '샘플로 작업 흐름을 테스트해요.' : '대화와 이미지를 이 기기에서 처리해요.',
+                    kIsWeb
+                        ? '내 AI를 꾸미고 샘플로 대화해 보세요.'
+                        : '나에게 맞는 AI와 오프라인에서도 이어서 대화해요.',
                     style: TextStyle(fontSize: 13, color: _muted, height: 1.45),
                   ),
                 ],
@@ -1828,55 +2059,63 @@ class _WorkspaceState extends State<Workspace> {
     ),
   );
 
-  Widget _composer() => DecoratedBox(
+  Widget _attachmentChips({required bool short}) {
+    final chips = Wrap(
+      spacing: 8,
+      children: [
+        if (_task case final task?)
+          InputChip(
+            avatar: Icon(task.controlIcon, size: 17),
+            label: Text(task.title),
+            onDeleted: _writing ? null : () => setState(() => _task = null),
+            deleteButtonTooltipMessage: '작업 선택 해제',
+          ),
+        for (final (index, photo) in _attachedPhotos.indexed)
+          InputChip(
+            avatar: ClipRRect(
+              borderRadius: BorderRadius.circular(7),
+              child: Image(
+                image: ResizeImage.resizeIfNeeded(
+                  72,
+                  null,
+                  _photoPreview(photo),
+                ),
+                width: 26,
+                height: 26,
+                fit: BoxFit.cover,
+              ),
+            ),
+            label: Text('이미지 ${index + 1}'),
+            onDeleted: _writing
+                ? null
+                : () => setState(() => _attachedPhotos.removeAt(index)),
+            deleteButtonTooltipMessage: '첨부 이미지 제거',
+          ),
+      ],
+    );
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 5),
+      child: short
+          ? SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: chips,
+            )
+          : chips,
+    );
+  }
+
+  Widget _composer({required bool short}) => DecoratedBox(
     decoration: const BoxDecoration(
       border: Border(top: BorderSide(color: _line)),
     ),
     child: Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+      padding: EdgeInsets.fromLTRB(16, short ? 4 : 10, 16, short ? 4 : 10),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (_task != null || _attachedPhotos.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 5),
-              child: Wrap(
-                spacing: 8,
-                children: [
-                  if (_task case final task?)
-                    InputChip(
-                      avatar: Icon(task.controlIcon, size: 17),
-                      label: Text(task.title),
-                      onDeleted: _writing
-                          ? null
-                          : () => setState(() => _task = null),
-                      deleteButtonTooltipMessage: '작업 선택 해제',
-                    ),
-                  for (final (index, photo) in _attachedPhotos.indexed)
-                    InputChip(
-                      avatar: ClipRRect(
-                        borderRadius: BorderRadius.circular(7),
-                        child: Image(
-                          image: ResizeImage.resizeIfNeeded(
-                            72,
-                            null,
-                            _photoPreview(photo),
-                          ),
-                          width: 26,
-                          height: 26,
-                          fit: BoxFit.cover,
-                        ),
-                      ),
-                      label: Text('이미지 ${index + 1}'),
-                      onDeleted: _writing
-                          ? null
-                          : () =>
-                                setState(() => _attachedPhotos.removeAt(index)),
-                      deleteButtonTooltipMessage: '첨부 이미지 제거',
-                    ),
-                ],
-              ),
-            ),
+            _attachmentChips(short: short),
           Container(
             decoration: BoxDecoration(
               color: _surface,
@@ -1917,7 +2156,7 @@ class _WorkspaceState extends State<Workspace> {
                     focusNode: _focus,
                     readOnly: _writing,
                     minLines: 1,
-                    maxLines: 4,
+                    maxLines: short ? 2 : 4,
                     textCapitalization: TextCapitalization.sentences,
                     decoration: InputDecoration(
                       border: InputBorder.none,

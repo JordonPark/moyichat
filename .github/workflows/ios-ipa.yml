@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
@@ -20,6 +20,8 @@ jobs:
 
       - name: Build iPhone release bundle
         run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
           flutter pub get --enforce-lockfile
           flutter build ios --release --no-codesign --no-pub
 
