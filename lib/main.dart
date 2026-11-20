@@ -1134,17 +1134,15 @@ class _WorkspaceState extends State<Workspace> {
       }
       final safeArea = MediaQuery.paddingOf(context);
       final keyboardHeight = MediaQuery.viewInsetsOf(context).bottom;
-      final toolbarEdge = constraints.maxWidth - safeArea.horizontal >= 250
-          ? _iosToolbarEdge
-          : null;
       final layout = WorkspaceLayout.fit(
         size: constraints.biggest,
         safeArea: safeArea,
         features: MediaQuery.displayFeaturesOf(context),
         compactWidth: _iosCompactWidth,
-        toolbarWidth: toolbarEdge == null ? 0 : _toolbarWidth,
+        toolbarWidth: _iosToolbarEdge == null ? 0 : _toolbarWidth,
         keyboardHeight: keyboardHeight,
       );
+      final toolbarEdge = layout.showsSideToolbar ? _iosToolbarEdge : null;
       return _screenTransition(
         context,
         Scaffold(

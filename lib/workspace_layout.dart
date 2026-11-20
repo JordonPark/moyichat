@@ -6,6 +6,7 @@ class WorkspaceLayout {
   const WorkspaceLayout({
     required this.sidebarWidth,
     required this.sidebarGap,
+    required this.showsSideToolbar,
     required this.chatInsets,
     required this.composerHeight,
     required this.foldGap,
@@ -29,7 +30,9 @@ class WorkspaceLayout {
       double.infinity,
     );
     final visibleHeight = height - keyboardHeight;
-    final toolbar = width >= 250 ? toolbarWidth : 0.0;
+    // A narrow cover display can already lose width to the system status area.
+    final showsSideToolbar = toolbarWidth > 0 && width - toolbarWidth >= 360;
+    final toolbar = showsSideToolbar ? toolbarWidth : 0.0;
     final window = Offset.zero & Size(width, height);
     Rect? bookFold;
     Rect? tabletopFold;
@@ -91,6 +94,7 @@ class WorkspaceLayout {
     return WorkspaceLayout(
       sidebarWidth: sidebar,
       sidebarGap: divider,
+      showsSideToolbar: showsSideToolbar,
       chatInsets: chatInsets,
       composerHeight: composerHeight,
       foldGap: composerHeight > 0 ? (tabletopFold!.height + 8) : 0,
@@ -100,6 +104,7 @@ class WorkspaceLayout {
 
   final double sidebarWidth;
   final double sidebarGap;
+  final bool showsSideToolbar;
   final EdgeInsets chatInsets;
   final double composerHeight;
   final double foldGap;

@@ -41,6 +41,27 @@ void main() {
     expect(fit(size, safeArea: safeArea, toolbarWidth: 52).sidebarWidth, 220);
   });
 
+  test(
+    'moves Duo actions to the header when the status area reduces chat width',
+    () {
+      const insets = EdgeInsets.only(right: 84);
+      final narrow = fit(
+        const Size(468, 681),
+        safeArea: insets,
+        compactWidth: true,
+        toolbarWidth: 52,
+      );
+      final wide = fit(
+        const Size(735, 681),
+        safeArea: insets,
+        toolbarWidth: 52,
+      );
+      expect(narrow.showsSideToolbar, isFalse);
+      expect(narrow.showsSidebar, isFalse);
+      expect(wide.showsSideToolbar, isTrue);
+    },
+  );
+
   test('keeps both panes clear of a vertical hinge', () {
     final layout = fit(
       const Size(700, 820),

@@ -6,6 +6,13 @@ import 'package:moyichat/generation_size.dart';
 import 'package:moyichat/kanana.dart';
 
 void main() {
+  const oldPhotoPrompt =
+      '사진에서 추출한 글과 분류 후보를 바탕으로 한국어로 설명해 줘. '
+      '분류 후보는 확실한 정보처럼 단정하지 말고, 추출한 정보에 없는 세부 내용은 추측하지 마.';
+  const oldPhotoFindings =
+      '사진 분류 후보\nutensil, tableware, cup, cord'
+      '\n\n사진에서 읽은 글자\nxbx';
+
   test('photo context persists without becoming visible message text', () {
     const message = ChatMessage(
       isUser: true,
@@ -22,6 +29,37 @@ void main() {
     final message = ChatMessage.fromJson({'user': true, 'text': '지난 회의 일정'});
 
     expect(message.modelText, '지난 회의 일정');
+  });
+
+  test('legacy photo records hide technical details from the conversation', () {
+    final workspace = ChatWorkspace.fromJson([
+      {'user': true, 'text': '$oldPhotoPrompt\n\n$oldPhotoFindings'},
+      {'user': false, 'text': '사진에 식기가 있어요.'},
+    ]);
+    final restored = ChatWorkspace.fromJson(workspace.toJson());
+    final messages = restored.tasks.single.messages;
+    expect(messages.first.text, '이미지 첨부');
+    expect(messages.first.instruction, '$oldPhotoPrompt\n\n$oldPhotoFindings');
+    expect(messages.last.text, '사진에 식기가 있어요.');
+  });
+
+  test(
+    'legacy photo migration preserves typed questions and recognizes OCR alone',
+    () {
+      final message = ChatMessage.fromJson({
+        'user': true,
+        'text': '$oldPhotoPrompt\r\n\r\n컵이 몇 개야?\r\n\r\n사진에서 읽은 글자\r\nxbx',
+      });
+      expect(message.text, '컵이 몇 개야?');
+      expect(message.modelText, contains('사진에서 읽은 글자\nxbx'));
+    },
+  );
+
+  test('photo headings in a regular message remain visible', () {
+    const text = '기록 예시\n\n$oldPhotoFindings';
+    final restored = ChatMessage.fromJson({'user': true, 'text': text});
+    expect(restored.text, text);
+    expect(restored.instruction, isNull);
   });
 
   test(

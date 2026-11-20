@@ -17,6 +17,17 @@ class ChatMessage {
   final String text;
   final String? instruction;
 
+  static const _legacyTaskPrompts = [
+    '사진에서 추출한 글과 분류 후보를 바탕으로 한국어로 설명해 줘. '
+        '분류 후보는 확실한 정보처럼 단정하지 말고, 추출한 정보에 없는 세부 내용은 추측하지 마.',
+    '다음 글을 핵심 위주로 요약해 줘.',
+    '다음 글을 자연스럽고 읽기 쉬운 한국어로 다듬어 줘.',
+    '다음 상황에 어울리는 짧은 답장을 써 줘.',
+  ];
+  static final _legacyPhotoHeading = RegExp(
+    r'(?:^|\n\n)(사진 분류 후보|사진에서 읽은 글자)\n',
+  );
+
   String get modelText => instruction == null ? text : '$instruction\n\n$text';
 
   Map<String, Object> toJson() => {
@@ -25,11 +36,29 @@ class ChatMessage {
     'instruction': ?instruction,
   };
 
-  factory ChatMessage.fromJson(Map<String, Object?> json) => ChatMessage(
-    isUser: json['user'] as bool,
-    text: json['text'] as String,
-    instruction: json['instruction'] as String?,
-  );
+  factory ChatMessage.fromJson(Map<String, Object?> json) {
+    final isUser = json['user'] as bool;
+    final text = json['text'] as String;
+    final instruction = json['instruction'] as String?;
+    // The old photo picker appended recognition output to the user's draft.
+    if (isUser && instruction == null) {
+      final normalized = text.replaceAll('\r\n', '\n');
+      for (final prompt in _legacyTaskPrompts) {
+        if (!normalized.startsWith('$prompt\n\n')) continue;
+        final draft = normalized.substring(prompt.length + 2);
+        final heading = _legacyPhotoHeading.firstMatch(draft);
+        if (heading == null) break;
+        final question = draft.substring(0, heading.start).trimRight();
+        final findings = draft.substring(heading.start).trimLeft();
+        return ChatMessage(
+          isUser: true,
+          text: question.isEmpty ? '이미지 첨부' : question,
+          instruction: '$prompt\n\n$findings',
+        );
+      }
+    }
+    return ChatMessage(isUser: isUser, text: text, instruction: instruction);
+  }
 }
 
 class Kanana {
