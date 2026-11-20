@@ -61,6 +61,16 @@ jobs:
           ditto -x -k "$scratch/archive.zip" "$scratch"
           archive="$scratch/Runner.xcarchive"
           test "$(/usr/libexec/PlistBuddy -c 'Print :ApplicationProperties:CFBundleIdentifier' "$archive/Info.plist")" = com.moyichat.moyichat
+          frameworks="$archive/Products/Applications/Runner.app/Frameworks"
+          # Give the linker-generated SDK stubs complete bundle signatures
+          # before Xcode re-signs the archive for App Store distribution.
+          for name in GoogleMobileAds UserMessagingPlatform; do
+            framework="$frameworks/$name.framework"
+            if [[ -d "$framework" ]]; then
+              codesign --force --sign - "$framework"
+              codesign --verify --strict "$framework"
+            fi
+          done
 
           options="$scratch/ExportOptions.plist"
           plutil -create xml1 "$options"
