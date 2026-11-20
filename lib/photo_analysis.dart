@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -61,9 +63,26 @@ class PhotoFindings {
   final List<String>? labels;
   final Uint8List? imageBytes;
 
-  String get modelContext => [
-    if (text case final value? when value.isNotEmpty) '인식된 내용: $value',
-    if (labels case final values? when values.isNotEmpty)
-      '참고용 물체 후보: ${values.join(', ')}',
-  ].join('\n');
+  String get modelContext {
+    final recognizedText = text?.trim() ?? '';
+    final objects = (labels ?? const <String>[])
+        .map((label) => label.trim())
+        .where((label) => label.isNotEmpty)
+        .where(
+          (label) =>
+              recognizedText.isEmpty ||
+              !const {
+                'document',
+                'screenshot',
+                'screen shot',
+              }.contains(label.toLowerCase().replaceAll('_', ' ')),
+        )
+        .toSet()
+        .toList();
+    final evidence = {
+      if (recognizedText.isNotEmpty) 'text': recognizedText,
+      if (objects.isNotEmpty) 'objects': objects,
+    };
+    return evidence.isEmpty ? '' : jsonEncode(evidence);
+  }
 }

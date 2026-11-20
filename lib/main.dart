@@ -20,6 +20,7 @@ import 'kanana.dart';
 import 'model_store.dart';
 import 'online_ads.dart';
 import 'photo_analysis.dart';
+import 'photo_reply.dart';
 import 'preview_storage_stub.dart'
     if (dart.library.js_interop) 'preview_storage.dart';
 import 'reply_markdown.dart';
@@ -589,17 +590,14 @@ class _WorkspaceState extends State<Workspace> {
         ? requestedAssistantName(draft)
         : null;
     final guarded = task == null && !photoTask ? localSafetyReply(draft) : null;
+    final photoContext = photos.map((photo) => photo.modelContext).toList();
     final instruction = [
       if (task != null) task.prompt,
       if (photoTask)
-        '사진 자료에서 현재 질문과 관련 있는 정보만 간결하게 정리해. '
-            '대화 캡처라면 결정 사항, 할 일, 담당자, 기한 중 실제로 나온 것만 골라. '
-            '목록에서는 항목과 같은 줄에 있는 수량을 그대로 짝지어. '
-            '제목과 인사말, 기타 설명은 빼고 확인한 정보만 짧은 목록으로 답해. '
-            '사진 분석용 제목이나 영어 후보 목록은 답변에 반복하지 마. '
-            '물체 후보는 참고 정보야. 확인할 수 있는 내용이 없으면 솔직히 알려 줘.',
-      for (final (index, photo) in photos.indexed)
-        '이미지 ${index + 1} 참고 자료\n${photo.modelContext}',
+        '현재 질문에 맞춰 사진에서 확인되는 내용만 답해. '
+            '별도 질문이 없으면 사진의 핵심만 알려 줘.',
+      for (final (index, evidence) in photoContext.indexed)
+        if (evidence.isNotEmpty) '이미지 ${index + 1}\n$evidence',
     ];
     _input.clear();
     _focus.unfocus();
@@ -621,6 +619,7 @@ class _WorkspaceState extends State<Workspace> {
       _reply = '';
     });
     _toLatest(force: true);
+    final photoReply = photoTask ? StringBuffer() : null;
     try {
       await _save();
       if (!mounted || _stopping) return;
@@ -653,8 +652,17 @@ class _WorkspaceState extends State<Workspace> {
             );
       await for (final fragment in response) {
         if (!mounted) break;
-        setState(() => _reply += fragment);
-        _toLatest();
+        photoReply?.write(fragment);
+        final visible = photoReply == null
+            ? '$_reply$fragment'
+            : cleanPhotoReply(photoReply.toString(), streaming: true);
+        if (_reply != visible) {
+          setState(() => _reply = visible);
+          _toLatest();
+        }
+      }
+      if (mounted && photoReply != null) {
+        setState(() => _reply = cleanPhotoReply(photoReply.toString()));
       }
       if (mounted && !_stopping && _reply.trim().isEmpty) {
         _notify('응답을 만들지 못했어요. 다시 시도해 주세요.');
@@ -665,7 +673,9 @@ class _WorkspaceState extends State<Workspace> {
       debugPrint('Generation failure: ${error.runtimeType}');
       if (!_stopping) _notify('응답 생성에 문제가 생겼어요. 다시 시도해 주세요.');
     } finally {
-      final reply = _reply.trim();
+      final reply =
+          (photoReply == null ? _reply : cleanPhotoReply(photoReply.toString()))
+              .trim();
       if (mounted) {
         setState(() {
           if (reply.isEmpty) {

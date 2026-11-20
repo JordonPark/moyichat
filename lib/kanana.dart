@@ -5,6 +5,7 @@ import 'package:llamadart/llamadart.dart';
 import 'assistant_identity.dart';
 import 'conversation_safety.dart';
 import 'generation_size.dart';
+import 'photo_reply.dart';
 
 class ChatMessage {
   const ChatMessage({
@@ -110,7 +111,8 @@ class Kanana {
     final base =
         '너는 모이챗 앱의 AI 도우미야. 사용자가 부르는 이름은 “$assistantName”이야. '
         '자연스러운 한국어로 정확하게 답해. 확실하지 않은 내용은 솔직하게 알려 줘.'
-        '\n$systemSafetyGuidance';
+        '\n$systemSafetyGuidance'
+        '${extractFacts ? '\n$photoReplyGuidance' : ''}';
     final latestTokens = (await _engine.tokenize(
       conversation.last.modelText,
       addSpecial: false,
