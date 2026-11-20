@@ -19,12 +19,13 @@ import 'photo_analysis.dart';
 import 'preview_storage_stub.dart'
     if (dart.library.js_interop) 'preview_storage.dart';
 
-const _paper = Color(0xfff8f7f1);
-const _ink = Color(0xff202e26);
-const _muted = Color(0xff526257);
-const _pine = Color(0xff164936);
-const _line = Color(0xffdedfd4);
-const _mint = Color(0xffe3eddf);
+const _paper = Color(0xfff8f5eb);
+const _surface = Color(0xfffffcf4);
+const _ink = Color(0xff24352c);
+const _muted = Color(0xff4e6053);
+const _pine = Color(0xff20513d);
+const _line = Color(0xffdcded1);
+const _mint = Color(0xffe0ecd8);
 
 IconData _controlIcon(IconData material, IconData cupertino) =>
     !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS
@@ -106,6 +107,13 @@ enum _Task {
     _Task.draft => CupertinoIcons.arrow_turn_up_left,
     _Task.scan => CupertinoIcons.doc_text_viewfinder,
   });
+
+  Color get tint => switch (this) {
+    _Task.summary => const Color(0xffe4eed8),
+    _Task.rewrite => const Color(0xfff4e3dc),
+    _Task.draft => const Color(0xffeee6f3),
+    _Task.scan => const Color(0xffe0edeb),
+  };
 }
 
 enum _TaskMenuAction { createChild, rename, delete }
@@ -962,7 +970,7 @@ class _WorkspaceState extends State<Workspace> {
       }
     }
     return ColoredBox(
-      color: const Color(0xffe9efe5),
+      color: const Color(0xffeaf0e4),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(14, 16, 14, 10),
         child: Column(
@@ -1163,12 +1171,12 @@ class _WorkspaceState extends State<Workspace> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const _AppMark(),
+                    const _MoyiIllustration(width: 152),
                     const SizedBox(height: 12),
                     const Text(
                       '모이챗',
                       style: TextStyle(
-                        fontSize: 30,
+                        fontSize: 34,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
@@ -1408,26 +1416,47 @@ class _WorkspaceState extends State<Workspace> {
     );
   }
 
-  Widget _welcome() => const Padding(
-    padding: EdgeInsets.only(bottom: 23, top: 7),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          '오늘은 무슨 일을\n도와드릴까요?',
-          style: TextStyle(
-            fontSize: 35,
-            height: 1.18,
-            fontWeight: FontWeight.w800,
-            letterSpacing: -1.4,
-          ),
-        ),
-        SizedBox(height: 12),
-        Text(
-          kIsWeb ? '샘플 답변과 사진으로 모이챗의 흐름을 테스트해요.' : '대화와 사진을 이 기기에서 처리해요.',
-          style: TextStyle(fontSize: 14, color: _muted),
-        ),
-      ],
+  Widget _welcome() => Container(
+    margin: const EdgeInsets.only(bottom: 23),
+    padding: const EdgeInsets.fromLTRB(18, 19, 12, 19),
+    decoration: BoxDecoration(
+      color: const Color(0xffeaf0df),
+      borderRadius: BorderRadius.circular(25),
+      border: Border.all(color: const Color(0xffdce6d2)),
+    ),
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        final illustrationWidth = (constraints.maxWidth * .34)
+            .clamp(76.0, 174.0)
+            .toDouble();
+        return Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '오늘은 무슨 일을 도와드릴까요?',
+                    style: TextStyle(
+                      fontSize: constraints.maxWidth < 430 ? 27 : 36,
+                      height: 1.19,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -.9,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    kIsWeb ? '샘플로 작업 흐름을 테스트해요.' : '대화와 이미지를 이 기기에서 처리해요.',
+                    style: TextStyle(fontSize: 13, color: _muted, height: 1.45),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 7),
+            _MoyiIllustration(width: illustrationWidth),
+          ],
+        );
+      },
     ),
   );
 
@@ -1468,8 +1497,9 @@ class _WorkspaceState extends State<Workspace> {
       margin: const EdgeInsets.only(bottom: 23),
       padding: const EdgeInsets.all(19),
       decoration: BoxDecoration(
-        color: _pine,
-        borderRadius: BorderRadius.circular(22),
+        color: _surface,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: _line),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1477,19 +1507,19 @@ class _WorkspaceState extends State<Workspace> {
           Text(
             title,
             style: const TextStyle(
-              color: Colors.white,
+              color: _ink,
               fontWeight: FontWeight.w800,
               fontSize: 19,
             ),
           ),
           const SizedBox(height: 6),
-          Text(details, style: const TextStyle(color: _mint, height: 1.55)),
+          Text(details, style: const TextStyle(color: _muted, height: 1.55)),
           if (downloading || checking) ...[
             const SizedBox(height: 14),
             LinearProgressIndicator(
               value: downloading ? progress : null,
-              backgroundColor: const Color(0xff3c6455),
-              color: _mint,
+              backgroundColor: _mint,
+              color: _pine,
               borderRadius: BorderRadius.circular(5),
             ),
           ],
@@ -1497,8 +1527,8 @@ class _WorkspaceState extends State<Workspace> {
             const SizedBox(height: 13),
             FilledButton.icon(
               style: FilledButton.styleFrom(
-                backgroundColor: _mint,
-                foregroundColor: _pine,
+                backgroundColor: _pine,
+                foregroundColor: Colors.white,
               ),
               onPressed: kIsWeb
                   ? downloading
@@ -1566,13 +1596,13 @@ class _WorkspaceState extends State<Workspace> {
                 SizedBox(
                   width: width,
                   child: Material(
-                    color: _task == task ? _mint : const Color(0xfffdfcf7),
+                    color: _task == task ? task.tint : _surface,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: BorderRadius.circular(19),
                       side: const BorderSide(color: _line),
                     ),
                     child: InkWell(
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: BorderRadius.circular(19),
                       onTap: _readingImage || _writing
                           ? null
                           : () => _choose(task),
@@ -1581,8 +1611,30 @@ class _WorkspaceState extends State<Workspace> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Icon(task.controlIcon, color: _pine, size: 22),
-                            const SizedBox(height: 9),
+                            Row(
+                              children: [
+                                Container(
+                                  width: 39,
+                                  height: 39,
+                                  decoration: BoxDecoration(
+                                    color: task.tint,
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Icon(
+                                    task.controlIcon,
+                                    color: _pine,
+                                    size: 21,
+                                  ),
+                                ),
+                                const Spacer(),
+                                const Icon(
+                                  Icons.chevron_right_rounded,
+                                  color: _muted,
+                                  size: 17,
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
                             Text(
                               task.title,
                               style: const TextStyle(
@@ -1637,7 +1689,7 @@ class _WorkspaceState extends State<Workspace> {
               width: message.isUser ? null : double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
               decoration: BoxDecoration(
-                color: message.isUser ? _mint : const Color(0xfffdfcf7),
+                color: message.isUser ? _mint : _surface,
                 border: Border.all(color: _line),
                 borderRadius: BorderRadius.circular(16),
               ),
@@ -1720,9 +1772,16 @@ class _WorkspaceState extends State<Workspace> {
             ),
           Container(
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: _surface,
               border: Border.all(color: _line),
               borderRadius: BorderRadius.circular(25),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x10223b2d),
+                  blurRadius: 14,
+                  offset: Offset(0, 4),
+                ),
+              ],
             ),
             padding: const EdgeInsets.fromLTRB(4, 3, 5, 3),
             child: Row(
@@ -1795,6 +1854,20 @@ class _WorkspaceState extends State<Workspace> {
         ],
       ),
     ),
+  );
+}
+
+class _MoyiIllustration extends StatelessWidget {
+  const _MoyiIllustration({required this.width});
+  final double width;
+
+  @override
+  Widget build(BuildContext context) => Image.asset(
+    'assets/moyi-notebook.webp',
+    width: width,
+    height: width * .92,
+    fit: BoxFit.contain,
+    excludeFromSemantics: true,
   );
 }
 

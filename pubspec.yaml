@@ -34,6 +34,7 @@ flutter:
     - assets/kanana-notice.txt
     - assets/apache-2.0.txt
     - assets/preview-groceries.png
+    - assets/moyi-notebook.webp
 
 hooks:
   user_defines:
