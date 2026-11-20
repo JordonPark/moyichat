@@ -37,7 +37,9 @@ class _ChatPhotoThumbnailState extends State<ChatPhotoThumbnail> {
             future: _photo,
             builder: (context, snapshot) {
               if (snapshot.connectionState != ConnectionState.done) {
-                return const Center(child: Icon(Icons.image_outlined));
+                return const Center(
+                  child: Icon(Icons.add_photo_alternate_outlined),
+                );
               }
               final bytes = snapshot.data;
               if (bytes == null) return unavailable;
@@ -102,7 +104,7 @@ class _ChatPhotoThumbnailState extends State<ChatPhotoThumbnail> {
                       backgroundColor: Colors.black54,
                     ),
                     onPressed: () => Navigator.pop(dialogContext),
-                    icon: const Icon(Icons.close),
+                    icon: const Icon(Icons.close_rounded),
                   ),
                 ),
               ),
