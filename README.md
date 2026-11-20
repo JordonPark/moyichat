@@ -13,6 +13,20 @@ Kanana 1.5 2.1B Instruct(2505)를 기기에서 실행하는 한국어 AI 앱이�
 
 ## 개발 및 빌드
 
+### 브라우저에서 빠르게 테스트
+
+Chrome에서 앱을 띄우고 Dart 파일을 수정한 뒤 터미널에서 `r`을 누르면 화면에 반영된다.
+
+```sh
+flutter run -d chrome
+```
+
+웹 미리보기는 실제 모바일 화면을 공유한다. **샘플 다운로드**로 일시 정지와 이어받기를 확인한 뒤, 작업 카드와 채팅을 테스트할 수 있다. **사진 분석**은 편집 가능한 샘플 결과를 연다. 대화는 페이지를 새로고침하면 초기화된다. 실제 Kanana 추론, 기기 사진 인식, 광고는 모바일 빌드에서 테스트한다.
+
+정적 웹 빌드는 `flutter build web --no-web-resources-cdn`으로 만들고 `build/web`을 로컬 HTTP 서버로 연다. GitHub Actions의 **MoyiChat web preview**에서도 같은 웹 빌드를 받을 수 있다.
+
+### Android와 iOS
+
 Flutter 3.50.1에서 작업했다. Android 빌드에는 Android SDK 36과 JDK가 필요하다. iOS에는 macOS와 Xcode가 필요하며, 프로젝트의 최소 배포 대상은 iOS 16.4다. iOS의 llama.cpp XCFramework는 Swift Package Manager로 연결한다.
 
 ```sh

@@ -103,7 +103,7 @@ class _WorkspaceState extends State<Workspace> {
   final _focus = FocusNode();
   final _scroll = ScrollController();
   final _photos = PhotoAnalysis();
-  final _ads = OnlineAds();
+  final _ads = kIsWeb ? null : OnlineAds();
   final _messages = <ChatMessage>[];
   _Task? _task;
   ModelStore? _store;
@@ -117,12 +117,17 @@ class _WorkspaceState extends State<Workspace> {
   bool _stopping = false;
   bool _readingImage = false;
   String _reply = '';
+  Timer? _previewDownload;
 
   @override
   void initState() {
     super.initState();
-    _ads.start();
-    unawaited(_initialize());
+    if (kIsWeb) {
+      _status = _ModelStatus.needed;
+    } else {
+      _ads?.start();
+      unawaited(_initialize());
+    }
   }
 
   Future<void> _initialize() async {
@@ -227,6 +232,26 @@ class _WorkspaceState extends State<Workspace> {
     });
   }
 
+  void _startPreviewDownload() {
+    setState(() => _status = _ModelStatus.downloading);
+    _previewDownload = Timer.periodic(const Duration(milliseconds: 160), (
+      timer,
+    ) {
+      setState(() {
+        _received += ModelStore.bytes ~/ 18;
+        if (_received >= ModelStore.bytes) {
+          timer.cancel();
+          _status = _ModelStatus.ready;
+        }
+      });
+    });
+  }
+
+  void _pausePreviewDownload() {
+    _previewDownload?.cancel();
+    setState(() => _status = _ModelStatus.needed);
+  }
+
   void _choose(_Task task) {
     if (task == _Task.scan) {
       unawaited(_readImage());
@@ -240,7 +265,12 @@ class _WorkspaceState extends State<Workspace> {
     if (_readingImage || _writing) return;
     setState(() => _readingImage = true);
     try {
-      final findings = recover
+      final findings = kIsWeb
+          ? const PhotoFindings(
+              text: '모이챗 사진 테스트\n사과 2개 · 우유 1개',
+              labels: ['Apple', 'Milk carton'],
+            )
+          : recover
           ? await _photos.recoverInterruptedPick()
           : await _photos.pickAndAnalyze();
       if (!mounted || findings == null) return;
@@ -273,7 +303,12 @@ class _WorkspaceState extends State<Workspace> {
   Future<void> _send() async {
     final engine = _kanana;
     final draft = _input.text.trim();
-    if (engine == null || draft.isEmpty || _writing || _readingImage) return;
+    if (_status != _ModelStatus.ready ||
+        draft.isEmpty ||
+        _writing ||
+        _readingImage) {
+      return;
+    }
     final task = _task;
     final text = task == null ? draft : '${task.prompt}\n\n$draft';
     _input.clear();
@@ -288,7 +323,8 @@ class _WorkspaceState extends State<Workspace> {
     try {
       await _save();
       if (!mounted || _stopping) return;
-      await for (final fragment in engine.reply(_messages)) {
+      final response = kIsWeb ? _previewReply(task) : engine!.reply(_messages);
+      await for (final fragment in response) {
         if (!mounted) break;
         setState(() => _reply += fragment);
         _toLatest();
@@ -325,6 +361,22 @@ class _WorkspaceState extends State<Workspace> {
     }
   }
 
+  Stream<String> _previewReply(_Task? task) async* {
+    final example = switch (task) {
+      _Task.summary =>
+        '핵심은 일정과 다음 할 일이에요.\n• 금요일 오후에 초안을 검토해요.\n• 의견을 모아 최종본을 정리해요.',
+      _Task.rewrite => '안녕하세요. 이번 주 금요일까지 초안을 검토해 주시면 감사하겠습니다.',
+      _Task.draft => '안녕하세요! 보내 주신 내용 확인했어요. 금요일 오후까지 검토해서 답드릴게요.',
+      _Task.scan => '샘플 사진에는 사과와 우유가 분류 후보로 표시되고, 글자에는 사과 2개와 우유 1개가 적혀 있어요.',
+      null => '안녕하세요! 메시지가 채팅창에 표시됐어요. 답변 복사, 응답 중지, 새 작업 시작을 테스트해 보세요.',
+    };
+    for (final word in RegExp(r'\S+\s*').allMatches(example)) {
+      await Future<void>.delayed(const Duration(milliseconds: 55));
+      if (!mounted || _stopping) return;
+      yield word[0]!;
+    }
+  }
+
   Future<void> _save() async {
     try {
       await _history?.write(_messages);
@@ -344,7 +396,9 @@ class _WorkspaceState extends State<Workspace> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('새 작업을 시작할까요?'),
-        content: const Text('이 기기에 저장된 현재 대화가 지워져요.'),
+        content: const Text(
+          kIsWeb ? '현재 미리보기 대화가 지워져요.' : '이 기기에 저장된 현재 대화가 지워져요.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -385,7 +439,8 @@ class _WorkspaceState extends State<Workspace> {
   @override
   void dispose() {
     _store?.pause();
-    _ads.dispose();
+    _ads?.dispose();
+    _previewDownload?.cancel();
     final model = _kanana;
     if (model != null) unawaited(model.dispose());
     _scroll.dispose();
@@ -419,7 +474,9 @@ class _WorkspaceState extends State<Workspace> {
                         const Padding(
                           padding: EdgeInsets.only(top: 8, bottom: 12),
                           child: Text(
-                            'Kanana가 답변을 준비하고 있어요…',
+                            kIsWeb
+                                ? '샘플 답변을 준비하고 있어요…'
+                                : 'Kanana가 답변을 준비하고 있어요…',
                             style: TextStyle(color: _muted),
                           ),
                         )
@@ -450,10 +507,10 @@ class _WorkspaceState extends State<Workspace> {
           style: TextStyle(fontSize: 21, fontWeight: FontWeight.w800),
         ),
         const Spacer(),
-        if (_status == _ModelStatus.ready)
+        if (kIsWeb || _status == _ModelStatus.ready)
           const Flexible(
             child: Text(
-              '오프라인 AI',
+              kIsWeb ? '웹 미리보기' : '오프라인 AI',
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: _pine,
@@ -480,9 +537,9 @@ class _WorkspaceState extends State<Workspace> {
               const Text(
                 'Kanana 1.5 2.1B Instruct · Q4_K_M\n한국어 오프라인 AI 작업 공간',
               ),
-              if (_ads.canShowPrivacyOptions)
+              if (_ads?.canShowPrivacyOptions ?? false)
                 TextButton(
-                  onPressed: () => unawaited(_ads.showPrivacyOptions()),
+                  onPressed: () => unawaited(_ads?.showPrivacyOptions()),
                   child: const Text('광고 개인정보 설정'),
                 ),
             ],
@@ -492,36 +549,43 @@ class _WorkspaceState extends State<Workspace> {
     ),
   );
 
-  Widget _banner() => ListenableBuilder(
-    listenable: _ads,
-    builder: (context, _) {
-      if (MediaQuery.viewInsetsOf(context).bottom > 0) {
-        return const SizedBox.shrink();
-      }
-      final ad = _ads.banner;
-      if (ad == null) return const SizedBox.shrink();
-      return LayoutBuilder(
-        builder: (context, constraints) {
-          if (constraints.maxWidth < ad.size.width) {
-            return const SizedBox.shrink();
-          }
-          return Padding(
-            padding: const EdgeInsets.only(top: 8, bottom: 2),
-            child: Column(
-              children: [
-                const Text('광고', style: TextStyle(color: _muted, fontSize: 11)),
-                SizedBox(
-                  width: ad.size.width.toDouble(),
-                  height: ad.size.height.toDouble(),
-                  child: AdWidget(key: ObjectKey(ad), ad: ad),
-                ),
-              ],
-            ),
-          );
-        },
-      );
-    },
-  );
+  Widget _banner() {
+    final ads = _ads;
+    if (ads == null) return const SizedBox.shrink();
+    return ListenableBuilder(
+      listenable: ads,
+      builder: (context, _) {
+        if (MediaQuery.viewInsetsOf(context).bottom > 0) {
+          return const SizedBox.shrink();
+        }
+        final ad = ads.banner;
+        if (ad == null) return const SizedBox.shrink();
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            if (constraints.maxWidth < ad.size.width) {
+              return const SizedBox.shrink();
+            }
+            return Padding(
+              padding: const EdgeInsets.only(top: 8, bottom: 2),
+              child: Column(
+                children: [
+                  const Text(
+                    '광고',
+                    style: TextStyle(color: _muted, fontSize: 11),
+                  ),
+                  SizedBox(
+                    width: ad.size.width.toDouble(),
+                    height: ad.size.height.toDouble(),
+                    child: AdWidget(key: ObjectKey(ad), ad: ad),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
 
   Widget _welcome() => const Padding(
     padding: EdgeInsets.only(bottom: 23, top: 7),
@@ -539,7 +603,7 @@ class _WorkspaceState extends State<Workspace> {
         ),
         SizedBox(height: 12),
         Text(
-          '대화와 사진을 이 기기에서 처리해요.',
+          kIsWeb ? '샘플 답변과 사진으로 모이챗의 흐름을 테스트해요.' : '대화와 사진을 이 기기에서 처리해요.',
           style: TextStyle(fontSize: 14, color: _muted),
         ),
       ],
@@ -552,20 +616,27 @@ class _WorkspaceState extends State<Workspace> {
         _status == _ModelStatus.verifying ||
         _status == _ModelStatus.loading ||
         _status == _ModelStatus.checking;
-    final title = switch (_status) {
-      _ModelStatus.downloading => 'Kanana 다운로드 중',
-      _ModelStatus.verifying => '모델 파일 확인 중',
-      _ModelStatus.loading => 'Kanana 준비 중',
-      _ModelStatus.checking => '저장 공간 확인 중',
-      _ModelStatus.error => '모델을 준비할 수 없어요',
-      _ => '오프라인 AI 준비하기',
-    };
+    final title = kIsWeb
+        ? downloading
+              ? '다운로드 흐름 테스트 중'
+              : '다운로드 흐름 테스트'
+        : switch (_status) {
+            _ModelStatus.downloading => 'Kanana 다운로드 중',
+            _ModelStatus.verifying => '모델 파일 확인 중',
+            _ModelStatus.loading => 'Kanana 준비 중',
+            _ModelStatus.checking => '저장 공간 확인 중',
+            _ModelStatus.error => '모델을 준비할 수 없어요',
+            _ => '오프라인 AI 준비하기',
+          };
     final progress = (_received / ModelStore.bytes).clamp(0.0, 1.0);
-    final details =
-        _modelError ??
-        (downloading
-            ? '${(_received / 1000000000).toStringAsFixed(2)} / 1.52 GB'
-            : 'Kanana · 1.52 GB\n한 번 받으면 인터넷 없이 대화할 수 있어요.');
+    final details = kIsWeb
+        ? downloading
+              ? '${(progress * 100).round()}%'
+              : '샘플 다운로드를 완료하면 채팅을 테스트할 수 있어요.'
+        : _modelError ??
+              (downloading
+                  ? '${(_received / 1000000000).toStringAsFixed(2)} / 1.52 GB'
+                  : 'Kanana · 1.52 GB\n한 번 받으면 인터넷 없이 대화할 수 있어요.');
     return Container(
       margin: const EdgeInsets.only(bottom: 23),
       padding: const EdgeInsets.all(19),
@@ -602,7 +673,11 @@ class _WorkspaceState extends State<Workspace> {
                 backgroundColor: _mint,
                 foregroundColor: _pine,
               ),
-              onPressed: downloading
+              onPressed: kIsWeb
+                  ? downloading
+                        ? _pausePreviewDownload
+                        : _startPreviewDownload
+                  : downloading
                   ? _store?.pause
                   : _store == null
                   ? _initialize
@@ -612,17 +687,19 @@ class _WorkspaceState extends State<Workspace> {
               icon: Icon(
                 downloading
                     ? Icons.pause_rounded
-                    : _installed || _store == null
+                    : !kIsWeb && (_installed || _store == null)
                     ? Icons.refresh_rounded
                     : Icons.download_rounded,
               ),
               label: Text(
                 downloading
                     ? '일시 정지'
-                    : _installed || _store == null
+                    : !kIsWeb && (_installed || _store == null)
                     ? '다시 시도'
                     : _received > 0
                     ? '이어받기'
+                    : kIsWeb
+                    ? '샘플 다운로드'
                     : '모델 다운로드',
               ),
             ),
@@ -715,7 +792,7 @@ class _WorkspaceState extends State<Workspace> {
               const Padding(
                 padding: EdgeInsets.only(bottom: 5, left: 3),
                 child: Text(
-                  'Kanana',
+                  kIsWeb ? '샘플 답변' : 'Kanana',
                   style: TextStyle(
                     fontSize: 12,
                     color: _pine,
@@ -878,7 +955,7 @@ class _PhotoReviewState extends State<_PhotoReview> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const Text(
-            '사진 분석 결과',
+            kIsWeb ? '샘플 사진 분석 결과' : '사진 분석 결과',
             style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 7),
