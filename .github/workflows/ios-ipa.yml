@@ -1,0 +1,42 @@
+name: MoyiChat iOS IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter 3.50.1
+        run: |
+          git clone --depth 1 --branch 3.50.1 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+
+      - name: Build iPhone release bundle
+        run: |
+          flutter pub get --enforce-lockfile
+          flutter build ios --release --no-codesign --no-pub
+
+      - name: Package unsigned IPA
+        run: |
+          app="build/ios/iphoneos/Runner.app"
+          test -f "$app/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")" = com.moyichat.moyichat
+          mkdir -p "$RUNNER_TEMP/moyichat/Payload" build/ios/ipa
+          ditto "$app" "$RUNNER_TEMP/moyichat/Payload/Runner.app"
+          ditto -c -k --keepParent "$RUNNER_TEMP/moyichat/Payload" build/ios/ipa/MoyiChat-unsigned.ipa
+          unzip -tq build/ios/ipa/MoyiChat-unsigned.ipa
+
+      - name: Save IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: MoyiChat-unsigned-IPA
+          path: build/ios/ipa/MoyiChat-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 7
