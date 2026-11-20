@@ -12,11 +12,13 @@ class ChatMessage {
     required this.isUser,
     required this.text,
     this.instruction,
+    this.photoIds = const [],
   });
 
   final bool isUser;
   final String text;
   final String? instruction;
+  final List<String> photoIds;
 
   static const _legacyTaskPrompts = [
     '사진에서 추출한 글과 분류 후보를 바탕으로 한국어로 설명해 줘. '
@@ -29,18 +31,27 @@ class ChatMessage {
     r'(?:^|\n\n)(사진 분류 후보|사진에서 읽은 글자)\n',
   );
 
-  String get modelText => instruction == null ? text : '$instruction\n\n$text';
+  String get displayText =>
+      text.isEmpty && photoIds.isNotEmpty ? '이미지 첨부' : text;
+
+  String get modelText =>
+      instruction == null ? displayText : '$instruction\n\n$displayText';
 
   Map<String, Object> toJson() => {
     'user': isUser,
     'text': text,
     'instruction': ?instruction,
+    if (photoIds.isNotEmpty) 'photoIds': photoIds,
   };
 
   factory ChatMessage.fromJson(Map<String, Object?> json) {
     final isUser = json['user'] as bool;
     final text = json['text'] as String;
     final instruction = json['instruction'] as String?;
+    final photoIds = switch (json['photoIds']) {
+      final List<Object?> ids => ids.whereType<String>().toList(),
+      _ => const <String>[],
+    };
     // The old photo picker appended recognition output to the user's draft.
     if (isUser && instruction == null) {
       final normalized = text.replaceAll('\r\n', '\n');
@@ -58,7 +69,12 @@ class ChatMessage {
         );
       }
     }
-    return ChatMessage(isUser: isUser, text: text, instruction: instruction);
+    return ChatMessage(
+      isUser: isUser,
+      text: text,
+      instruction: instruction,
+      photoIds: photoIds,
+    );
   }
 }
 
@@ -200,7 +216,7 @@ class Kanana {
     ];
     for (final message in archive.take(8)) {
       if (_stopped) return null;
-      final text = await _tokenPrefix(message.text, 104);
+      final text = await _tokenPrefix(message.displayText, 104);
       notes.add('${message.isUser ? '사용자' : '도우미'}: $text');
     }
     if (_stopped) return null;
@@ -246,9 +262,12 @@ class Kanana {
     final notes = <String>[];
     for (final message in conversation.reversed.take(6)) {
       if (_stopped || budget <= 0) break;
-      final tokens = await _engine.tokenize(message.text, addSpecial: false);
+      final tokens = await _engine.tokenize(
+        message.displayText,
+        addSpecial: false,
+      );
       final text = tokens.length <= budget
-          ? message.text
+          ? message.displayText
           : await _engine.detokenize(tokens.take(budget).toList());
       notes.add('${message.isUser ? '사용자' : '도우미'}: $text');
       budget -= tokens.length + 8;

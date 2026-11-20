@@ -1,5 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
+import 'dart:typed_data';
 
 import 'assistant_identity.dart';
 import 'generation_size.dart';
@@ -45,7 +47,7 @@ class ChatTask {
           ? parentId == null
                 ? '새 작업'
                 : '하위 대화'
-          : messages.first.text.split('\n').first);
+          : messages.first.displayText.split('\n').first);
 
   Map<String, Object> toJson() => {
     'id': id,
@@ -146,6 +148,9 @@ class ChatHistory {
   ChatHistory.preview() : _file = null;
 
   final File? _file;
+  static final _random = Random.secure();
+  static final _photoIdPattern = RegExp(r'^[a-f0-9]{32}$');
+  Set<String> _savedPhotoIds = {};
   Future<void> _pendingWrite = Future<void>.value();
 
   Future<ChatWorkspace?> read() async {
@@ -155,17 +160,82 @@ class ChatHistory {
         : await file.exists()
         ? await file.readAsString()
         : null;
-    return contents == null
-        ? null
-        : ChatWorkspace.fromJson(jsonDecode(contents));
+    if (contents == null) return null;
+    final workspace = ChatWorkspace.fromJson(jsonDecode(contents));
+    _savedPhotoIds = _photoIds(workspace);
+    return workspace;
   }
 
   Future<void> write(ChatWorkspace workspace) {
     final snapshot = jsonEncode(workspace.toJson());
-    final next = _pendingWrite.then((_) => _writeSnapshot(snapshot));
+    final photoIds = _photoIds(workspace);
+    final next = _pendingWrite.then((_) async {
+      await _writeSnapshot(snapshot);
+      final removed = _savedPhotoIds.difference(photoIds);
+      _savedPhotoIds = photoIds;
+      await discardPhotos(removed);
+    });
     _pendingWrite = next.onError((_, _) {});
     return next;
   }
+
+  Future<List<String>> storePhotos(Iterable<Uint8List> photos) async {
+    final ids = <String>[];
+    try {
+      for (final bytes in photos) {
+        final id = List.generate(
+          16,
+          (_) => _random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+        ).join();
+        ids.add(id);
+        final file = _photoFile(id);
+        if (file == null) {
+          await writePreviewPhoto(id, bytes);
+        } else {
+          await file.parent.create(recursive: true);
+          await file.writeAsBytes(bytes, flush: true);
+        }
+      }
+      return ids;
+    } catch (_) {
+      await discardPhotos(ids);
+      rethrow;
+    }
+  }
+
+  Future<Uint8List?> readPhoto(String id) async {
+    if (!_photoIdPattern.hasMatch(id)) return null;
+    final file = _photoFile(id);
+    if (file == null) return readPreviewPhoto(id);
+    return await file.exists() ? file.readAsBytes() : null;
+  }
+
+  Future<void> discardPhotos(Iterable<String> ids) async {
+    for (final id in ids.where(_photoIdPattern.hasMatch)) {
+      try {
+        final file = _photoFile(id);
+        if (file == null) {
+          await deletePreviewPhoto(id);
+        } else if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (_) {
+        // A cleanup failure must not invalidate an already saved conversation.
+      }
+    }
+  }
+
+  File? _photoFile(String id) {
+    final directory = _file?.parent;
+    return directory == null
+        ? null
+        : File.fromUri(directory.uri.resolve('chat-photos/$id'));
+  }
+
+  Set<String> _photoIds(ChatWorkspace workspace) => {
+    for (final task in workspace.tasks)
+      for (final message in task.messages) ...message.photoIds,
+  };
 
   Future<void> _writeSnapshot(String snapshot) async {
     final file = _file;

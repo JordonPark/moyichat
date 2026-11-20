@@ -14,6 +14,7 @@ import 'app_update_dialog.dart';
 import 'assistant_avatar.dart';
 import 'assistant_identity.dart';
 import 'chat_history.dart';
+import 'chat_photo.dart';
 import 'conversation_safety.dart';
 import 'generation_size.dart';
 import 'kanana.dart';
@@ -586,6 +587,41 @@ class _WorkspaceState extends State<Workspace> {
     final parent = _parentTask;
     final photos = _attachedPhotos.toList();
     final photoTask = photos.isNotEmpty;
+    List<String> photoIds = const [];
+    if (photoTask) {
+      final history = _history;
+      if (history == null) return;
+      setState(() => _writing = true);
+      try {
+        photoIds = await history.storePhotos([
+          for (final photo in photos)
+            photo.imageBytes ??
+                Uint8List.sublistView(
+                  await rootBundle.load('assets/preview-groceries.png'),
+                ),
+        ]);
+      } on Object catch (error) {
+        debugPrint('Chat photo save failure: ${error.runtimeType}');
+        if (mounted) {
+          setState(() {
+            _writing = false;
+            _stopping = false;
+          });
+          _notify('사진을 저장하지 못했어요. 저장 공간을 확인하고 다시 보내 주세요.');
+        }
+        return;
+      }
+      if (!mounted || _stopping) {
+        await history.discardPhotos(photoIds);
+        if (mounted) {
+          setState(() {
+            _writing = false;
+            _stopping = false;
+          });
+        }
+        return;
+      }
+    }
     final renamed = task == null && !photoTask
         ? requestedAssistantName(draft)
         : null;
@@ -609,8 +645,9 @@ class _WorkspaceState extends State<Workspace> {
       _messages.add(
         ChatMessage(
           isUser: true,
-          text: draft.isEmpty ? '이미지 첨부' : draft,
+          text: draft,
           instruction: instruction.isEmpty ? null : instruction.join('\n'),
+          photoIds: photoIds,
         ),
       );
       _attachedPhotos.clear();
@@ -1384,7 +1421,7 @@ class _WorkspaceState extends State<Workspace> {
                             ? null
                             : task.messages
                                   .where(
-                                    (message) => message.text
+                                    (message) => message.displayText
                                         .toLowerCase()
                                         .contains(query),
                                   )
@@ -1413,7 +1450,7 @@ class _WorkspaceState extends State<Workspace> {
                           subtitle: match == null
                               ? null
                               : Text(
-                                  match.text,
+                                  match.displayText,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
@@ -1487,7 +1524,7 @@ class _WorkspaceState extends State<Workspace> {
   bool _matchesTask(ChatTask task, String query) =>
       task.title.toLowerCase().contains(query) ||
       task.messages.any(
-        (message) => message.text.toLowerCase().contains(query),
+        (message) => message.displayText.toLowerCase().contains(query),
       );
 
   Widget _setupScreen() {
@@ -2170,10 +2207,7 @@ class _WorkspaceState extends State<Workspace> {
                 borderRadius: BorderRadius.circular(16),
               ),
               child: message.isUser
-                  ? SelectableText(
-                      message.text,
-                      style: const TextStyle(fontSize: 15, height: 1.58),
-                    )
+                  ? _userMessageBody(message)
                   : ReplyMarkdown(text: message.text, streaming: streaming),
             ),
             if (!message.isUser && !streaming)
@@ -2193,6 +2227,43 @@ class _WorkspaceState extends State<Workspace> {
       ),
     ),
   );
+
+  Widget _userMessageBody(ChatMessage message) {
+    final history = _history;
+    if (history == null || message.photoIds.isEmpty) {
+      return SelectableText(
+        message.displayText,
+        style: const TextStyle(fontSize: 15, height: 1.58),
+      );
+    }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Wrap(
+          alignment: WrapAlignment.end,
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final (index, id) in message.photoIds.indexed)
+              ChatPhotoThumbnail(
+                key: ValueKey(id),
+                photoId: id,
+                number: index + 1,
+                load: history.readPhoto,
+              ),
+          ],
+        ),
+        if (message.text.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          SelectableText(
+            message.text,
+            style: const TextStyle(fontSize: 15, height: 1.58),
+          ),
+        ],
+      ],
+    );
+  }
 
   Widget _assistantPortrait(double size) => ClipOval(
     child: SizedBox.square(
