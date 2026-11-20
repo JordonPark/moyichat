@@ -73,6 +73,8 @@ jobs:
           PY
 
       - uses: shorebirdtech/setup-shorebird@v1
+        with:
+          cache: true
 
       - uses: actions/setup-java@v6
         if: inputs.platform == 'android'
