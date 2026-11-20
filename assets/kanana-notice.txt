@@ -1,0 +1,9 @@
+Kanana 1.5 2.1B Instruct (2505) — Kakao Corp.
+https://huggingface.co/kakaocorp/kanana-1.5-2.1b-instruct-2505
+
+Original model under the Apache License, Version 2.0.
+Changes to upstream model weights: converted to GGUF and quantized to Q4_K_M.
+The downloaded GGUF is the TaeyoungLeeJack community conversion.
+https://huggingface.co/TaeyoungLeeJack/kanana-1.5-2.1b-instruct-2505-Q4_K_M-GGUF/tree/9a6c4bf9e13fea91c3100a891e7312dd9911f098
+
+Full license text: apache-2.0.txt.

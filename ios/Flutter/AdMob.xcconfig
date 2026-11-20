@@ -1,0 +1,2 @@
+// Override with the iOS AdMob app ID before enabling live banner ads.
+MOYI_ADMOB_IOS_APP_ID = ca-app-pub-3940256099942544~1458002511

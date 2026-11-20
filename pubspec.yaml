@@ -1,0 +1,40 @@
+name: moyichat
+description: 한국어 오프라인 AI 작업 공간
+publish_to: none
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.10.7
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  connectivity_plus: 7.3.2
+  crypto: ^3.0.7
+  google_mobile_ads: 9.2.0
+  image_picker: ^1.2.1
+  llamadart: 0.20.2
+  llamadart_llama_cpp_flutter: 0.20.2
+  material_ui: ^1.1.0
+  path_provider: ^2.1.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/kanana-notice.txt
+    - assets/apache-2.0.txt
+
+hooks:
+  user_defines:
+    llamadart:
+      llamadart_native_runtimes: [llama_cpp]
+      llamadart_native_backends:
+        platforms:
+          android: [cpu]

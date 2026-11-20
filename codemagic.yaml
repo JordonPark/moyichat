@@ -1,0 +1,46 @@
+workflows:
+  moyichat-ios-check:
+    name: MoyiChat iOS build check
+    instance_type: mac_mini_m2
+    max_build_duration: 45
+    environment:
+      flutter: 3.50.1
+      xcode: latest
+    scripts:
+      - name: Check Flutter sources
+        script: |
+          flutter pub get --enforce-lockfile
+          flutter analyze --no-pub
+          flutter test --no-pub
+      - name: Compile the iPhone app
+        script: flutter build ios --release --no-codesign --no-pub
+
+  moyichat-testflight:
+    name: MoyiChat TestFlight
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    integrations:
+      app_store_connect: MoyiChat App Store Connect
+    environment:
+      flutter: 3.50.1
+      xcode: latest
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.moyichat.moyichat
+    scripts:
+      - name: Resolve dependencies
+        script: flutter pub get --enforce-lockfile
+      - name: Apply App Store signing
+        script: xcode-project use-profiles
+      - name: Build signed IPA
+        script: |
+          flutter build ipa --release --no-pub \
+            --build-number="$PROJECT_BUILD_NUMBER" \
+            --export-options-plist="$HOME/export_options.plist"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_app_store: false
