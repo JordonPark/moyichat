@@ -134,6 +134,7 @@ class _WorkspaceState extends State<Workspace> {
   static const _previewTick = Duration(milliseconds: 160);
   final _input = TextEditingController();
   final _focus = FocusNode();
+  final _taskSearchFocus = FocusNode();
   final _scroll = ScrollController();
   final _taskSearch = TextEditingController();
   final _photos = PhotoAnalysis();
@@ -1117,6 +1118,7 @@ class _WorkspaceState extends State<Workspace> {
     if (model != null) unawaited(model.dispose());
     _scroll.dispose();
     _taskSearch.dispose();
+    _taskSearchFocus.dispose();
     _focus.dispose();
     _input.dispose();
     super.dispose();
@@ -1313,6 +1315,9 @@ class _WorkspaceState extends State<Workspace> {
             SizedBox(height: short ? 4 : 12),
             TextField(
               controller: _taskSearch,
+              groupId: _taskSearch,
+              focusNode: _taskSearchFocus,
+              onTapUpOutside: (_) => _taskSearchFocus.unfocus(),
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
                 isDense: true,
@@ -1591,7 +1596,10 @@ class _WorkspaceState extends State<Workspace> {
             child: Align(
               alignment: Alignment.topCenter,
               heightFactor: 1,
-              child: _composer(short: layout.short),
+              child: TextFieldTapRegion(
+                groupId: _input,
+                child: _composer(short: layout.short),
+              ),
             ),
           ),
         ],
@@ -2223,7 +2231,9 @@ class _WorkspaceState extends State<Workspace> {
                 Expanded(
                   child: TextField(
                     controller: _input,
+                    groupId: _input,
                     focusNode: _focus,
+                    onTapUpOutside: (_) => _focus.unfocus(),
                     readOnly: _writing,
                     minLines: 1,
                     maxLines: short ? 2 : 4,
