@@ -952,7 +952,11 @@ class _WorkspaceState extends State<Workspace> {
                     dense: true,
                     contentPadding: EdgeInsets.zero,
                     leading: _assistantPortrait(38),
-                    title: const Text('챗봇 프로필 사진'),
+                    title: const Text(
+                      '프로필 사진',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                     trailing: TextButton(
                       onPressed: _readingImage
                           ? null
