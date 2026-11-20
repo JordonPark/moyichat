@@ -14,6 +14,7 @@ class ChatTask {
     this.name,
     this.parentId,
     this.responseStyle,
+    this.memory,
   });
 
   factory ChatTask.create({String? parentId}) => ChatTask(
@@ -28,13 +29,22 @@ class ChatTask {
   final String? parentId;
   String? name;
   String? responseStyle;
+  ConversationMemory? memory;
+
+  List<ChatMessage> get nextMemoryBatch {
+    const batchSize = 8;
+    const recentMessages = 12;
+    final start = memory?.messageCount ?? 0;
+    if (messages.length - start < batchSize + recentMessages) return const [];
+    return messages.sublist(start, start + batchSize);
+  }
 
   String get title =>
       name ??
       (messages.isEmpty
           ? parentId == null
                 ? '새 작업'
-                : '하위 작업'
+                : '하위 대화'
           : messages.first.text.split('\n').first);
 
   Map<String, Object> toJson() => {
@@ -43,6 +53,7 @@ class ChatTask {
     'name': ?name,
     'parentId': ?parentId,
     'responseStyle': ?responseStyle,
+    'memory': ?memory?.toJson(),
   };
 
   factory ChatTask.fromJson(Map<String, Object?> value) => ChatTask(
@@ -51,7 +62,27 @@ class ChatTask {
     name: value['name'] as String?,
     parentId: value['parentId'] as String?,
     responseStyle: value['responseStyle'] as String?,
+    memory: ConversationMemory.fromJson(value['memory']),
   );
+}
+
+class ConversationMemory {
+  const ConversationMemory({required this.summary, required this.messageCount});
+
+  final String summary;
+  final int messageCount;
+
+  Map<String, Object> toJson() => {
+    'summary': summary,
+    'messageCount': messageCount,
+  };
+
+  static ConversationMemory? fromJson(Object? value) => switch (value) {
+    {'summary': final String summary, 'messageCount': final int count}
+        when summary.isNotEmpty && count > 0 =>
+      ConversationMemory(summary: summary, messageCount: count),
+    _ => null,
+  };
 }
 
 class ChatWorkspace {

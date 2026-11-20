@@ -70,7 +70,7 @@ class WorkspaceLayout {
     } else if (!compactWidth &&
         width - toolbar >= 600 &&
         tabletopFold == null) {
-      sidebar = ((width - toolbar) * .32).clamp(200.0, 286.0);
+      sidebar = ((width - toolbar) * .32).clamp(220.0, 286.0);
       divider = 1;
     }
 

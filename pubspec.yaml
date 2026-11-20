@@ -31,6 +31,7 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
+    - assets/tasks/
     - assets/kanana-notice.txt
     - assets/apache-2.0.txt
     - assets/preview-groceries.png

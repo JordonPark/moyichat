@@ -29,6 +29,7 @@ const _muted = Color(0xff4e6053);
 const _pine = Color(0xff20513d);
 const _line = Color(0xffdcded1);
 const _mint = Color(0xffe0ecd8);
+const _workspaceGutter = 18.0;
 
 IconData _controlIcon(IconData material, IconData cupertino) =>
     !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS
@@ -84,33 +85,27 @@ enum _ModelStatus {
 }
 
 enum _Task {
-  summary('내용 요약', '긴 글에서 핵심만', Icons.subject_rounded, '다음 글을 핵심 위주로 요약해 줘.'),
-  rewrite(
-    '문장 다듬기',
-    '더 자연스러운 한국어로',
-    Icons.edit_note_rounded,
-    '다음 글을 자연스럽고 읽기 쉬운 한국어로 다듬어 줘.',
-  ),
-  draft('답장 초안', '상황과 말투에 맞게', Icons.reply_rounded, '다음 상황에 어울리는 짧은 답장을 써 줘.'),
+  summary('내용 요약', '긴 글에서 핵심만', '다음 글을 핵심 위주로 요약해 줘.'),
+  rewrite('문장 다듬기', '더 자연스러운 한국어로', '다음 글을 자연스럽고 읽기 쉬운 한국어로 다듬어 줘.'),
+  draft('답장 초안', '상황과 말투에 맞게', '다음 상황에 어울리는 짧은 답장을 써 줘.'),
   scan(
     '사진 분석',
     '글자와 물체 읽기',
-    Icons.document_scanner_outlined,
     '사진에서 읽은 내용과 앞선 대화를 참고해 사용자가 지금 필요한 정보만 한국어로 뽑아 줘.',
   );
 
-  const _Task(this.title, this.detail, this.icon, this.prompt);
+  const _Task(this.title, this.detail, this.prompt);
   final String title;
   final String detail;
-  final IconData icon;
   final String prompt;
 
-  IconData get controlIcon => _controlIcon(icon, switch (this) {
-    _Task.summary => CupertinoIcons.text_alignleft,
-    _Task.rewrite => CupertinoIcons.pencil,
-    _Task.draft => CupertinoIcons.arrow_turn_up_left,
-    _Task.scan => CupertinoIcons.doc_text_viewfinder,
-  });
+  Widget illustration(double size) => Image.asset(
+    'assets/tasks/$name.webp',
+    width: size,
+    height: size,
+    fit: BoxFit.contain,
+    excludeFromSemantics: true,
+  );
 
   Color get tint => switch (this) {
     _Task.summary => const Color(0xffe4eed8),
@@ -120,7 +115,7 @@ enum _Task {
   };
 }
 
-enum _TaskMenuAction { createChild, responseStyle, rename, delete }
+enum _TaskMenuAction { responseStyle, rename, delete }
 
 class Workspace extends StatefulWidget {
   const Workspace({super.key});
@@ -159,6 +154,7 @@ class _WorkspaceState extends State<Workspace> {
   double? _downloadSpeed;
   bool _installed = false;
   bool _writing = false;
+  bool _summarizing = false;
   bool _stopping = false;
   bool _readingImage = false;
   bool _requestingDownload = false;
@@ -602,6 +598,10 @@ class _WorkspaceState extends State<Workspace> {
     try {
       await _save();
       if (!mounted || _stopping) return;
+      if (engine != null && renamed == null && guarded == null) {
+        await _updateConversationMemory(engine);
+        if (!mounted || _stopping) return;
+      }
       final response = renamed != null
           ? Stream.value('좋아요. 앞으로 “$renamed”라고 불러 주세요.')
           : guarded != null
@@ -619,7 +619,10 @@ class _WorkspaceState extends State<Workspace> {
                   _activeTask.responseStyle ??
                   _parentTask?.responseStyle ??
                   _assistantStyle,
+              memorySummary: _activeTask.memory?.summary,
+              summarizedMessageCount: _activeTask.memory?.messageCount ?? 0,
               parentConversation: parent?.messages ?? const [],
+              parentMemorySummary: parent?.memory?.summary,
               extractFacts: photoTask,
             );
       await for (final fragment in response) {
@@ -649,11 +652,36 @@ class _WorkspaceState extends State<Workspace> {
           }
           _reply = '';
           _writing = false;
+          _summarizing = false;
           _stopping = false;
         });
         _toLatest();
         await _save();
       }
+    }
+  }
+
+  Future<void> _updateConversationMemory(Kanana engine) async {
+    final task = _activeTask;
+    final archive = task.nextMemoryBatch;
+    if (archive.isEmpty) return;
+    final memory = task.memory;
+    setState(() => _summarizing = true);
+    try {
+      final summary = await engine.summarize(
+        archive,
+        previousSummary: memory?.summary,
+      );
+      if (summary != null && !_stopping) {
+        task.memory = ConversationMemory(
+          summary: summary,
+          messageCount: (memory?.messageCount ?? 0) + archive.length,
+        );
+      }
+    } on Object catch (error) {
+      debugPrint('Conversation summary failed: ${error.runtimeType}');
+    } finally {
+      if (mounted) setState(() => _summarizing = false);
     }
   }
 
@@ -1014,7 +1042,7 @@ class _WorkspaceState extends State<Workspace> {
         title: const Text('작업을 삭제할까요?'),
         content: Text(
           removedIds.length > 1
-              ? '‘${task.title}’과 하위 작업이 함께 삭제돼요.'
+              ? '‘${task.title}’과 하위 대화가 함께 삭제돼요.'
               : '‘${task.title}’의 대화가 삭제돼요.',
         ),
         actions: [
@@ -1329,18 +1357,14 @@ class _WorkspaceState extends State<Workspace> {
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          contentPadding: EdgeInsets.only(left: child ? 28 : 8),
-                          leading: Icon(
-                            child
-                                ? _controlIcon(
-                                    Icons.chat_bubble_outline_rounded,
-                                    CupertinoIcons.chat_bubble,
-                                  )
-                                : _controlIcon(
-                                    Icons.folder_outlined,
-                                    CupertinoIcons.folder,
-                                  ),
-                            size: 18,
+                          contentPadding: EdgeInsets.only(left: child ? 24 : 6),
+                          horizontalTitleGap: 7,
+                          minLeadingWidth: 26,
+                          leading: Image.asset(
+                            'assets/tasks/conversation.webp',
+                            width: child ? 21 : 26,
+                            fit: BoxFit.contain,
+                            excludeFromSemantics: true,
                           ),
                           title: Text(
                             task.title,
@@ -1360,39 +1384,54 @@ class _WorkspaceState extends State<Workspace> {
                                   _openTask(task);
                                   close?.call();
                                 },
-                          trailing: PopupMenuButton<_TaskMenuAction>(
-                            tooltip: '작업 옵션',
-                            enabled: !busy,
-                            onSelected: (action) {
-                              switch (action) {
-                                case _TaskMenuAction.createChild:
-                                  _newChildTask(task);
-                                  close?.call();
-                                case _TaskMenuAction.responseStyle:
-                                  unawaited(_editResponseStyle(task: task));
-                                case _TaskMenuAction.rename:
-                                  unawaited(_renameTask(task));
-                                case _TaskMenuAction.delete:
-                                  unawaited(_deleteTask(task));
-                              }
-                            },
-                            itemBuilder: (context) => [
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
                               if (!child)
-                                const PopupMenuItem(
-                                  value: _TaskMenuAction.createChild,
-                                  child: Text('하위 작업 만들기'),
+                                IconButton(
+                                  tooltip: '하위 대화 추가',
+                                  color: _pine,
+                                  onPressed: busy
+                                      ? null
+                                      : () {
+                                          _newChildTask(task);
+                                          close?.call();
+                                        },
+                                  icon: Icon(
+                                    _controlIcon(
+                                      Icons.add_rounded,
+                                      CupertinoIcons.plus,
+                                    ),
+                                    size: 21,
+                                  ),
                                 ),
-                              const PopupMenuItem(
-                                value: _TaskMenuAction.responseStyle,
-                                child: Text('답변 방식 설정'),
-                              ),
-                              const PopupMenuItem(
-                                value: _TaskMenuAction.rename,
-                                child: Text('이름 바꾸기'),
-                              ),
-                              const PopupMenuItem(
-                                value: _TaskMenuAction.delete,
-                                child: Text('삭제'),
+                              PopupMenuButton<_TaskMenuAction>(
+                                tooltip: '작업 옵션',
+                                enabled: !busy,
+                                onSelected: (action) {
+                                  switch (action) {
+                                    case _TaskMenuAction.responseStyle:
+                                      unawaited(_editResponseStyle(task: task));
+                                    case _TaskMenuAction.rename:
+                                      unawaited(_renameTask(task));
+                                    case _TaskMenuAction.delete:
+                                      unawaited(_deleteTask(task));
+                                  }
+                                },
+                                itemBuilder: (context) => [
+                                  const PopupMenuItem(
+                                    value: _TaskMenuAction.responseStyle,
+                                    child: Text('답변 방식 설정'),
+                                  ),
+                                  const PopupMenuItem(
+                                    value: _TaskMenuAction.rename,
+                                    child: Text('이름 바꾸기'),
+                                  ),
+                                  const PopupMenuItem(
+                                    value: _TaskMenuAction.delete,
+                                    child: Text('삭제'),
+                                  ),
+                                ],
                               ),
                             ],
                           ),
@@ -1490,9 +1529,9 @@ class _WorkspaceState extends State<Workspace> {
                     ListView(
                       controller: _scroll,
                       padding: EdgeInsets.fromLTRB(
-                        16,
+                        _workspaceGutter,
                         layout.short ? 8 : 20,
-                        16,
+                        _workspaceGutter,
                         16,
                       ),
                       children: [
@@ -1509,7 +1548,9 @@ class _WorkspaceState extends State<Workspace> {
                                 bottom: 12,
                               ),
                               child: Text(
-                                kIsWeb
+                                _summarizing
+                                    ? '이전 대화를 정리하고 있어요…'
+                                    : kIsWeb
                                     ? '샘플 답변을 준비하고 있어요…'
                                     : '$_assistantName · 답변 준비 중…',
                                 style: const TextStyle(color: _muted),
@@ -1545,12 +1586,14 @@ class _WorkspaceState extends State<Workspace> {
     alignment: Alignment.centerLeft,
     child: TextButton.icon(
       onPressed: _writing || _readingImage ? null : () => _openTask(parent),
-      icon: Icon(
-        _controlIcon(Icons.folder_open_rounded, CupertinoIcons.folder_open),
-        size: 17,
+      icon: Image.asset(
+        'assets/tasks/conversation.webp',
+        width: 20,
+        height: 20,
+        excludeFromSemantics: true,
       ),
       label: Text(
-        '상위 작업 · ${parent.title}',
+        '상위 대화 · ${parent.title}',
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
@@ -1593,17 +1636,25 @@ class _WorkspaceState extends State<Workspace> {
     required bool sideToolbar,
     required bool short,
   }) => Padding(
-    padding: EdgeInsets.fromLTRB(12, short ? 0 : 8, 8, short ? 0 : 8),
+    padding: EdgeInsets.fromLTRB(
+      openMenu == null ? _workspaceGutter : 8,
+      short ? 0 : 8,
+      8,
+      short ? 0 : 8,
+    ),
     child: Row(
       children: [
         if (openMenu != null) _menuButton(openMenu),
         const _AppMark(),
         const SizedBox(width: 10),
-        const Text(
-          '모이챗',
-          style: TextStyle(fontSize: 21, fontWeight: FontWeight.w800),
+        const Expanded(
+          child: Text(
+            '모이챗',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 21, fontWeight: FontWeight.w800),
+          ),
         ),
-        const Spacer(),
         if (!short)
           const Flexible(
             child: Text(
@@ -1733,7 +1784,7 @@ class _WorkspaceState extends State<Workspace> {
     child: LayoutBuilder(
       builder: (context, constraints) {
         final illustrationWidth = (constraints.maxWidth * .34)
-            .clamp(76.0, 174.0)
+            .clamp(64.0, 174.0)
             .toDouble();
         return Row(
           children: [
@@ -1744,7 +1795,7 @@ class _WorkspaceState extends State<Workspace> {
                   Text(
                     '오늘은 무슨 일을\n도와드릴까요?',
                     style: TextStyle(
-                      fontSize: constraints.maxWidth < 270
+                      fontSize: constraints.maxWidth < 310
                           ? 21
                           : constraints.maxWidth < 430
                           ? 27
@@ -1885,7 +1936,7 @@ class _WorkspaceState extends State<Workspace> {
   }
 
   Widget _taskGrid() => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       const Padding(
         padding: EdgeInsets.only(bottom: 11),
@@ -1896,83 +1947,94 @@ class _WorkspaceState extends State<Workspace> {
       ),
       LayoutBuilder(
         builder: (context, constraints) {
-          final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
-          final width = constraints.maxWidth < 310 || textScale > 1.5
-              ? constraints.maxWidth
-              : (constraints.maxWidth - 10) / 2;
-          return Wrap(
-            spacing: 10,
-            runSpacing: 10,
+          final largeText = MediaQuery.textScalerOf(context).scale(14) > 21;
+          final columns = constraints.maxWidth >= 310 && !largeText ? 2 : 1;
+          final cardWidth =
+              (constraints.maxWidth - (columns - 1) * 10) / columns;
+          final tasks = _Task.values;
+          return Column(
             children: [
-              for (final task in _Task.values)
-                SizedBox(
-                  width: width,
-                  child: Material(
-                    color: _task == task ? task.tint : _surface,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(19),
-                      side: const BorderSide(color: _line),
-                    ),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(19),
-                      onTap: _readingImage || _writing
-                          ? null
-                          : () => _choose(task),
-                      child: Padding(
-                        padding: const EdgeInsets.all(14),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Container(
-                                  width: 39,
-                                  height: 39,
-                                  decoration: BoxDecoration(
-                                    color: task.tint,
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: Icon(
-                                    task.controlIcon,
-                                    color: _pine,
-                                    size: 21,
-                                  ),
-                                ),
-                                const Spacer(),
-                                const Icon(
-                                  Icons.chevron_right_rounded,
-                                  color: _muted,
-                                  size: 17,
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 10),
-                            Text(
-                              task.title,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              task.detail,
-                              style: const TextStyle(
-                                color: _muted,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
+              for (var start = 0; start < tasks.length; start += columns) ...[
+                if (start > 0) const SizedBox(height: 10),
+                IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (final task in tasks.skip(start).take(columns)) ...[
+                        if (task != tasks[start]) const SizedBox(width: 10),
+                        Expanded(
+                          child: _taskCard(task, horizontal: cardWidth >= 195),
                         ),
-                      ),
-                    ),
+                      ],
+                    ],
                   ),
                 ),
+              ],
             ],
           );
         },
       ),
     ],
   );
+
+  Widget _taskCard(_Task task, {required bool horizontal}) {
+    final picture = Container(
+      width: 54,
+      height: 54,
+      decoration: BoxDecoration(
+        color: task.tint,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      alignment: Alignment.center,
+      child: task.illustration(48),
+    );
+    final caption = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(task.title, style: const TextStyle(fontWeight: FontWeight.w800)),
+        const SizedBox(height: 3),
+        Text(task.detail, style: const TextStyle(color: _muted, fontSize: 12)),
+      ],
+    );
+    final chevron = Icon(
+      _controlIcon(Icons.chevron_right_rounded, CupertinoIcons.chevron_right),
+      color: _muted,
+      size: 16,
+    );
+    return Material(
+      color: _task == task ? task.tint : _surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(19),
+        side: const BorderSide(color: _line),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(19),
+        onTap: _readingImage || _writing ? null : () => _choose(task),
+        child: Padding(
+          padding: const EdgeInsets.all(13),
+          child: horizontal
+              ? Row(
+                  children: [
+                    picture,
+                    const SizedBox(width: 12),
+                    Expanded(child: caption),
+                    const SizedBox(width: 5),
+                    chevron,
+                  ],
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [picture, const Spacer(), chevron]),
+                    const SizedBox(height: 9),
+                    caption,
+                  ],
+                ),
+        ),
+      ),
+    );
+  }
 
   Widget _bubble(ChatMessage message, {bool streaming = false}) => Padding(
     padding: const EdgeInsets.only(bottom: 14),
@@ -2065,7 +2127,7 @@ class _WorkspaceState extends State<Workspace> {
       children: [
         if (_task case final task?)
           InputChip(
-            avatar: Icon(task.controlIcon, size: 17),
+            avatar: task.illustration(22),
             label: Text(task.title),
             onDeleted: _writing ? null : () => setState(() => _task = null),
             deleteButtonTooltipMessage: '작업 선택 해제',
@@ -2109,7 +2171,10 @@ class _WorkspaceState extends State<Workspace> {
       border: Border(top: BorderSide(color: _line)),
     ),
     child: Padding(
-      padding: EdgeInsets.fromLTRB(16, short ? 4 : 10, 16, short ? 4 : 10),
+      padding: EdgeInsets.symmetric(
+        horizontal: _workspaceGutter,
+        vertical: short ? 4 : 10,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,

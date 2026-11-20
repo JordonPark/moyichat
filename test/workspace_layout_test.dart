@@ -38,7 +38,7 @@ void main() {
       ).showsSidebar,
       isFalse,
     );
-    expect(fit(size, safeArea: safeArea, toolbarWidth: 52).sidebarWidth, 200);
+    expect(fit(size, safeArea: safeArea, toolbarWidth: 52).sidebarWidth, 220);
   });
 
   test('keeps both panes clear of a vertical hinge', () {

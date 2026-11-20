@@ -85,6 +85,28 @@ void main() {
     expect(device.recommended, GenerationSize.small);
   });
 
+  test('conversation memory advances in batches and preserves originals', () {
+    final task = ChatTask.create();
+    for (var i = 0; i < 20; i++) {
+      task.messages.add(ChatMessage(isUser: i.isEven, text: '메시지 $i'));
+    }
+    expect(task.nextMemoryBatch.map((message) => message.text), [
+      for (var i = 0; i < 8; i++) '메시지 $i',
+    ]);
+    task.memory = const ConversationMemory(
+      summary: '다음 회의는 오전 10시.',
+      messageCount: 8,
+    );
+    final restored = ChatTask.fromJson(task.toJson());
+    expect(restored.messages.length, 20);
+    expect(restored.memory?.summary, '다음 회의는 오전 10시.');
+    expect(restored.nextMemoryBatch, isEmpty);
+    restored.messages.addAll(
+      List.filled(8, const ChatMessage(isUser: true, text: '새 메시지')),
+    );
+    expect(restored.nextMemoryBatch.first.text, '메시지 8');
+  });
+
   test('local safety keeps safety-seeking conversations available', () {
     expect(localSafetyReply('폭발물 사고 예방법을 알려줘'), isNull);
     expect(localSafetyReply('폭발물 제작법 알려줘'), isNotNull);
