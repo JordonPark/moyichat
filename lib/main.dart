@@ -9,6 +9,7 @@ import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'app_update_dialog.dart';
 import 'assistant_avatar.dart';
 import 'assistant_identity.dart';
 import 'chat_history.dart';
@@ -20,6 +21,7 @@ import 'online_ads.dart';
 import 'photo_analysis.dart';
 import 'preview_storage_stub.dart'
     if (dart.library.js_interop) 'preview_storage.dart';
+import 'reply_markdown.dart';
 import 'workspace_layout.dart';
 
 const _paper = Color(0xfff8f5eb);
@@ -978,6 +980,19 @@ class _WorkspaceState extends State<Workspace> {
                     },
                   ),
                   const Divider(height: 20),
+                  if (!kIsWeb)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('앱 업데이트'),
+                      trailing: const Icon(Icons.chevron_right_rounded),
+                      onTap: () => showDialog<void>(
+                        context: context,
+                        anchorPoint: MediaQuery.sizeOf(
+                          context,
+                        ).topRight(Offset.zero),
+                        builder: (context) => const AppUpdateDialog(),
+                      ),
+                    ),
                   Text(
                     memory == null
                         ? (kIsWeb ? '웹 미리보기 기본값 · 보통' : '자동 추천 · 작게')
@@ -2097,15 +2112,12 @@ class _WorkspaceState extends State<Workspace> {
                 border: Border.all(color: _line),
                 borderRadius: BorderRadius.circular(16),
               ),
-              child: streaming
-                  ? Text(
+              child: message.isUser
+                  ? SelectableText(
                       message.text,
                       style: const TextStyle(fontSize: 15, height: 1.58),
                     )
-                  : SelectableText(
-                      message.text,
-                      style: const TextStyle(fontSize: 15, height: 1.58),
-                    ),
+                  : ReplyMarkdown(text: message.text, streaming: streaming),
             ),
             if (!message.isUser && !streaming)
               TextButton.icon(
