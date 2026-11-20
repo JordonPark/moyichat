@@ -512,7 +512,12 @@ class _WorkspaceState extends State<Workspace> {
     setState(() => _status = _ModelStatus.needed);
   }
 
-  void _choose(_Task task) {
+  void _choose(_Task task, {required bool keyboardVisible}) {
+    if (keyboardVisible) {
+      _focus.unfocus();
+      _taskSearchFocus.unfocus();
+      return;
+    }
     if (task == _Task.scan) {
       unawaited(_readImage());
     } else {
@@ -1562,7 +1567,8 @@ class _WorkspaceState extends State<Workspace> {
                         if (layout.short && _parentTask != null)
                           _parentLink(_parentTask!),
                         if (_messages.isEmpty) _welcome(),
-                        if (_messages.isEmpty) _taskGrid(),
+                        if (_messages.isEmpty)
+                          _taskGrid(keyboardVisible: keyboardVisible),
                         for (final message in _messages) _bubble(message),
                         if (_writing)
                           if (_reply.isEmpty)
@@ -2002,7 +2008,7 @@ class _WorkspaceState extends State<Workspace> {
     );
   }
 
-  Widget _taskGrid() => Column(
+  Widget _taskGrid({required bool keyboardVisible}) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       const Padding(
@@ -2030,7 +2036,11 @@ class _WorkspaceState extends State<Workspace> {
                       for (final task in tasks.skip(start).take(columns)) ...[
                         if (task != tasks[start]) const SizedBox(width: 10),
                         Expanded(
-                          child: _taskCard(task, horizontal: cardWidth >= 195),
+                          child: _taskCard(
+                            task,
+                            horizontal: cardWidth >= 195,
+                            keyboardVisible: keyboardVisible,
+                          ),
                         ),
                       ],
                     ],
@@ -2044,7 +2054,11 @@ class _WorkspaceState extends State<Workspace> {
     ],
   );
 
-  Widget _taskCard(_Task task, {required bool horizontal}) {
+  Widget _taskCard(
+    _Task task, {
+    required bool horizontal,
+    required bool keyboardVisible,
+  }) {
     final picture = Container(
       width: 54,
       height: 54,
@@ -2077,7 +2091,9 @@ class _WorkspaceState extends State<Workspace> {
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(19),
-        onTap: _readingImage || _writing ? null : () => _choose(task),
+        onTap: _readingImage || _writing
+            ? null
+            : () => _choose(task, keyboardVisible: keyboardVisible),
         child: Padding(
           padding: const EdgeInsets.all(13),
           child: horizontal
