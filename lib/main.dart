@@ -1642,33 +1642,32 @@ class _WorkspaceState extends State<Workspace> {
       8,
       short ? 0 : 8,
     ),
-    child: Row(
-      children: [
-        if (openMenu != null) _menuButton(openMenu),
-        const _AppMark(),
-        const SizedBox(width: 10),
-        const Expanded(
-          child: Text(
-            '모이챗',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 21, fontWeight: FontWeight.w800),
-          ),
-        ),
-        if (!short)
-          const Flexible(
+    child: LayoutBuilder(
+      builder: (context, constraints) => Row(
+        children: [
+          if (openMenu != null) _menuButton(openMenu),
+          const _AppMark(),
+          const SizedBox(width: 10),
+          const Expanded(
             child: Text(
-              kIsWeb ? '웹 미리보기' : '오프라인 AI',
+              '모이챗',
+              maxLines: 1,
               overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 21, fontWeight: FontWeight.w800),
+            ),
+          ),
+          if (!short && constraints.maxWidth >= (openMenu == null ? 275 : 335))
+            const Text(
+              kIsWeb ? '웹 미리보기' : '오프라인 AI',
               style: TextStyle(
                 color: _pine,
                 fontWeight: FontWeight.w700,
                 fontSize: 12,
               ),
             ),
-          ),
-        if (!sideToolbar) ...[_settingsButton(), _aboutButton()],
-      ],
+          if (!sideToolbar) ...[_settingsButton(), _aboutButton()],
+        ],
+      ),
     ),
   );
 
