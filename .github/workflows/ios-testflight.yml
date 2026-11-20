@@ -1,0 +1,76 @@
+name: MoyiChat TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      ota_run_id:
+        description: Successful iOS MoyiChat OTA release run ID
+        required: true
+        type: string
+
+permissions:
+  actions: read
+
+concurrency:
+  group: moyichat-testflight
+
+jobs:
+  upload:
+    if: github.ref == 'refs/heads/master'
+    runs-on: xcode-27
+    timeout-minutes: 25
+    steps:
+      - name: Sign OTA archive and upload to App Store Connect
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OTA_RUN_ID: ${{ inputs.ota_run_id }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ vars.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ vars.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          if [[ ! "$OTA_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo '::error::Enter the numeric ID of a successful iOS OTA run.'
+            exit 1
+          fi
+          if [[ ! "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ || ! "$ASC_KEY_ID" =~ ^[A-Z0-9]{10}$ || -z "$ASC_ISSUER_ID" || -z "$ASC_PRIVATE_KEY" ]]; then
+            echo '::error::Configure the App Store Connect team key and Apple team ID.'
+            exit 1
+          fi
+
+          workflow_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/shorebird-ota.yml" --jq .id)
+          is_release=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$OTA_RUN_ID" \
+            --jq ".conclusion == \"success\" and .head_branch == \"master\" and .workflow_id == $workflow_id")
+          test "$is_release" = true
+          artifact=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$OTA_RUN_ID/artifacts" \
+            --jq '.artifacts[] | select(.name == "MoyiChat-OTA-unsigned.xcarchive.zip" and .expired == false)')
+          artifact_id=$(jq -er '.id' <<< "$artifact")
+          expected_digest=$(jq -er '.digest | sub("^sha256:"; "")' <<< "$artifact")
+
+          umask 077
+          scratch=$(mktemp -d "$RUNNER_TEMP/moyichat-sign.XXXXXX")
+          key="$scratch/AuthKey_$ASC_KEY_ID.p8"
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$ASC_PRIVATE_KEY" > "$key"
+          unset ASC_PRIVATE_KEY
+
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$scratch/archive.zip"
+          actual_digest=$(shasum -a 256 "$scratch/archive.zip" | awk '{print $1}')
+          test "$actual_digest" = "$expected_digest"
+          ditto -x -k "$scratch/archive.zip" "$scratch"
+          archive="$scratch/Runner.xcarchive"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :ApplicationProperties:CFBundleIdentifier' "$archive/Info.plist")" = com.moyichat.moyichat
+
+          options="$scratch/ExportOptions.plist"
+          plutil -create xml1 "$options"
+          plutil -insert method -string app-store-connect "$options"
+          plutil -insert destination -string upload "$options"
+          plutil -insert signingStyle -string automatic "$options"
+          plutil -insert teamID -string "$APPLE_TEAM_ID" "$options"
+          plutil -insert manageAppVersionAndBuildNumber -bool NO "$options"
+
+          xcodebuild -exportArchive -archivePath "$archive" \
+            -exportPath "$scratch/export" -exportOptionsPlist "$options" \
+            -allowProvisioningUpdates -authenticationKeyPath "$key" \
+            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID"
