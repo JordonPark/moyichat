@@ -1,6 +1,7 @@
 import Flutter
 import UIKit
 import Vision
+import os
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
@@ -13,6 +14,20 @@ import Vision
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    let device = FlutterMethodChannel(
+      name: "moyichat/device",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    device.setMethodCallHandler { call, result in
+      guard call.method == "memory" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      result([
+        "total": Int64(ProcessInfo.processInfo.physicalMemory),
+        "available": Int64(os_proc_available_memory()),
+      ])
+    }
     let channel = FlutterMethodChannel(
       name: "moyichat/photos",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()

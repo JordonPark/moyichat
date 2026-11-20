@@ -33,7 +33,7 @@ class OnlineAds extends ChangeNotifier with WidgetsBindingObserver {
   Future<InitializationStatus>? _sdk;
 
   void start() {
-    if (_unit.isEmpty) return;
+    if (_unit.isEmpty || _subscription != null) return;
     WidgetsBinding.instance.addObserver(this);
     _subscription = _connectivity.onConnectivityChanged.listen(
       _connectionChanged,

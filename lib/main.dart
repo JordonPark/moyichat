@@ -1,17 +1,23 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:cupertino_ui/cupertino_ui.dart' show CupertinoIcons;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'assistant_identity.dart';
 import 'chat_history.dart';
+import 'conversation_safety.dart';
+import 'generation_size.dart';
 import 'kanana.dart';
 import 'model_store.dart';
 import 'online_ads.dart';
 import 'photo_analysis.dart';
+import 'preview_storage_stub.dart'
+    if (dart.library.js_interop) 'preview_storage.dart';
 
 const _paper = Color(0xfff8f7f1);
 const _ink = Color(0xff202e26);
@@ -19,6 +25,11 @@ const _muted = Color(0xff526257);
 const _pine = Color(0xff164936);
 const _line = Color(0xffdedfd4);
 const _mint = Color(0xffe3eddf);
+
+IconData _controlIcon(IconData material, IconData cupertino) =>
+    !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS
+    ? cupertino
+    : material;
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -80,8 +91,7 @@ enum _Task {
     '사진 분석',
     '글자와 물체 읽기',
     Icons.document_scanner_outlined,
-    '사진에서 추출한 글과 분류 후보를 바탕으로 한국어로 설명해 줘. '
-        '분류 후보는 확실한 정보처럼 단정하지 말고, 추출한 정보에 없는 세부 내용은 추측하지 마.',
+    '사진에서 읽은 내용과 앞선 대화를 참고해 사용자가 지금 필요한 정보만 한국어로 뽑아 줘.',
   );
 
   const _Task(this.title, this.detail, this.icon, this.prompt);
@@ -89,7 +99,16 @@ enum _Task {
   final String detail;
   final IconData icon;
   final String prompt;
+
+  IconData get controlIcon => _controlIcon(icon, switch (this) {
+    _Task.summary => CupertinoIcons.text_alignleft,
+    _Task.rewrite => CupertinoIcons.pencil,
+    _Task.draft => CupertinoIcons.arrow_turn_up_left,
+    _Task.scan => CupertinoIcons.doc_text_viewfinder,
+  });
 }
+
+enum _TaskMenuAction { createChild, rename, delete }
 
 class Workspace extends StatefulWidget {
   const Workspace({super.key});
@@ -99,12 +118,23 @@ class Workspace extends StatefulWidget {
 }
 
 class _WorkspaceState extends State<Workspace> {
+  static const _maxAttachments = 10;
+  static const _previewBytes = 24000000;
+  static const _previewTick = Duration(milliseconds: 160);
   final _input = TextEditingController();
   final _focus = FocusNode();
   final _scroll = ScrollController();
+  final _taskSearch = TextEditingController();
   final _photos = PhotoAnalysis();
   final _ads = kIsWeb ? null : OnlineAds();
-  final _messages = <ChatMessage>[];
+  late ChatTask _activeTask = ChatTask.create();
+  late final _tasks = <ChatTask>[_activeTask];
+  List<ChatMessage> get _messages => _activeTask.messages;
+  ChatTask? get _parentTask =>
+      _tasks.where((task) => task.id == _activeTask.parentId).firstOrNull;
+  final _drafts =
+      <String, ({String text, _Task? action, List<PhotoFindings> photos})>{};
+  final _attachedPhotos = <PhotoFindings>[];
   _Task? _task;
   ModelStore? _store;
   ChatHistory? _history;
@@ -112,22 +142,140 @@ class _WorkspaceState extends State<Workspace> {
   _ModelStatus _status = _ModelStatus.checking;
   String? _modelError;
   int _received = 0;
+  double? _downloadSpeed;
   bool _installed = false;
   bool _writing = false;
   bool _stopping = false;
   bool _readingImage = false;
+  bool _requestingDownload = false;
+  bool _previewConsent = false;
   String _reply = '';
+  String _assistantName = defaultAssistantName;
+  GenerationSize? _manualSize;
+  DeviceMemory? _deviceMemory;
+
+  GenerationSize get _recommendedSize =>
+      _deviceMemory?.recommended ??
+      (kIsWeb ? GenerationSize.normal : GenerationSize.small);
+  GenerationSize get _selectedSize => _manualSize ?? _recommendedSize;
   Timer? _previewDownload;
+  double? _followTarget;
 
   @override
   void initState() {
     super.initState();
     if (kIsWeb) {
-      _status = _ModelStatus.needed;
+      final history = _history = ChatHistory.preview();
+      unawaited(_initializePreview(history));
     } else {
-      _ads?.start();
       unawaited(_initialize());
     }
+  }
+
+  Future<void> _initializePreview(ChatHistory history) async {
+    final splash = Future<void>.delayed(const Duration(milliseconds: 350));
+    final saved = await _readHistory(history);
+    await splash;
+    if (!mounted) return;
+    var ready = false;
+    try {
+      ready = previewModelReady();
+    } on Object catch (error) {
+      debugPrint('Preview model state unavailable: ${error.runtimeType}');
+    }
+    setState(() {
+      if (saved != null) _restoreTasks(saved);
+      _status = ready ? _ModelStatus.ready : _ModelStatus.needed;
+    });
+    if (ready && _messages.isNotEmpty) _toLatest(force: true);
+  }
+
+  Future<void> _requestDownload() async {
+    if (_requestingDownload || _status == _ModelStatus.downloading) return;
+    _requestingDownload = true;
+    try {
+      final store = _store;
+      final accepted = kIsWeb
+          ? _previewConsent
+          : await store!.hasDownloadConsent();
+      if (!mounted) return;
+      if (!accepted) {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text(kIsWeb ? '샘플 다운로드 안내' : '모델 다운로드 안내'),
+            content: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    kIsWeb
+                        ? '웹 미리보기는 샘플 속도로 진행돼요. 실제 모델 파일은 받지 않아요.'
+                        : 'Hugging Face에서 Kanana 모델 약 1.52GB를 받아 앱 전용 저장 공간에 보관해요. 다운로드에는 인터넷 연결이 필요하며 모바일 데이터가 사용될 수 있어요.',
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    '모바일 앱은 사진과 대화를 기기 안에서 처리해요. AI 답변은 틀릴 수 있으니 중요한 내용은 확인해 주세요.',
+                  ),
+                  TextButton(
+                    onPressed: () => showLicensePage(
+                      context: context,
+                      applicationName: '모이챗',
+                    ),
+                    child: const Text('Kanana 모델 라이선스 보기'),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('나중에'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('동의하고 다운로드'),
+              ),
+            ],
+          ),
+        );
+        if (!mounted || confirmed != true) return;
+        if (kIsWeb) {
+          _previewConsent = true;
+        } else {
+          await store!.acceptDownload();
+        }
+      }
+      if (!mounted) return;
+      if (kIsWeb) {
+        _startPreviewDownload();
+      } else {
+        await _downloadModel();
+      }
+    } on Object catch (error) {
+      _modelFailure(error, '다운로드 동의를 저장할 수 없어요. 다시 시도해 주세요.');
+    } finally {
+      _requestingDownload = false;
+    }
+  }
+
+  Future<ChatWorkspace?> _readHistory(ChatHistory history) =>
+      history.read().onError((error, stack) {
+        _notify('이전 작업을 읽을 수 없어요.');
+        return null;
+      });
+
+  void _restoreTasks(ChatWorkspace saved) {
+    _assistantName = saved.assistantName;
+    _manualSize = saved.generationSize;
+    if (saved.tasks.isEmpty) return;
+    _tasks
+      ..clear()
+      ..addAll(saved.tasks);
+    _activeTask =
+        _tasks.where((task) => task.id == saved.activeId).firstOrNull ??
+        _tasks.first;
   }
 
   Future<void> _initialize() async {
@@ -143,19 +291,16 @@ class _WorkspaceState extends State<Workspace> {
       }
       final store = ModelStore(directory);
       final history = ChatHistory(directory);
-      final restored = await history.read().onError((error, stack) {
-        _notify('이전 대화 기록을 읽을 수 없어요.');
-        return <ChatMessage>[];
-      });
+      final restored = await _readHistory(history);
+      final memory = await DeviceMemory.read();
       final installed = await store.isInstalled();
       final partial = await store.partialBytes();
       if (!mounted) return;
       setState(() {
         _store = store;
         _history = history;
-        _messages
-          ..clear()
-          ..addAll(restored);
+        _deviceMemory = memory;
+        if (restored != null) _restoreTasks(restored);
         _installed = installed;
         _received = partial;
         _status = _ModelStatus.needed;
@@ -174,11 +319,30 @@ class _WorkspaceState extends State<Workspace> {
     setState(() {
       _status = _ModelStatus.downloading;
       _modelError = null;
+      _downloadSpeed = null;
     });
+    final clock = Stopwatch()..start();
+    int? lastBytes;
+    var lastTime = 0;
     try {
       final completed = await store.download(
         onProgress: (bytes) {
-          if (mounted) setState(() => _received = bytes);
+          if (!mounted) return;
+          final previous = lastBytes;
+          final now = clock.elapsedMilliseconds;
+          setState(() {
+            _received = bytes;
+            if (previous == null || bytes < previous) {
+              lastBytes = bytes;
+              lastTime = now;
+              _downloadSpeed = null;
+            } else if (now - lastTime >= 400) {
+              final speed = (bytes - previous) * 1000 / (now - lastTime);
+              _downloadSpeed = (_downloadSpeed ?? speed) * .65 + speed * .35;
+              lastBytes = bytes;
+              lastTime = now;
+            }
+          });
         },
         onVerify: () {
           if (mounted) setState(() => _status = _ModelStatus.verifying);
@@ -209,7 +373,7 @@ class _WorkspaceState extends State<Workspace> {
       _modelError = null;
     });
     try {
-      final engine = await Kanana.load(_store!.model.path);
+      final engine = await Kanana.load(_store!.model.path, size: _selectedSize);
       if (!mounted) {
         await engine.dispose();
         return;
@@ -218,6 +382,7 @@ class _WorkspaceState extends State<Workspace> {
         _kanana = engine;
         _status = _ModelStatus.ready;
       });
+      _ads?.start();
     } on Object catch (error) {
       _modelFailure(error, '모델을 열 수 없어요. 다른 앱을 닫고 다시 시도해 주세요.');
     }
@@ -234,16 +399,37 @@ class _WorkspaceState extends State<Workspace> {
 
   void _startPreviewDownload() {
     setState(() => _status = _ModelStatus.downloading);
-    _previewDownload = Timer.periodic(const Duration(milliseconds: 160), (
-      timer,
-    ) {
+    _previewDownload = Timer.periodic(_previewTick, (timer) {
       setState(() {
-        _received += ModelStore.bytes ~/ 18;
-        if (_received >= ModelStore.bytes) {
+        _received += _previewBytes ~/ 18;
+        if (_received >= _previewBytes) {
           timer.cancel();
-          _status = _ModelStatus.ready;
+          _status = _ModelStatus.loading;
+          _previewDownload = Timer(const Duration(milliseconds: 400), () {
+            if (!mounted) return;
+            _rememberPreviewModel(true);
+            setState(() => _status = _ModelStatus.ready);
+            if (_messages.isNotEmpty) _toLatest(force: true);
+          });
         }
       });
+    });
+  }
+
+  void _rememberPreviewModel(bool ready) {
+    try {
+      setPreviewModelReady(ready);
+    } on Object catch (error) {
+      debugPrint('Preview model state unavailable: ${error.runtimeType}');
+    }
+  }
+
+  void _resetPreviewDownload() {
+    _rememberPreviewModel(false);
+    setState(() {
+      _previewConsent = false;
+      _received = 0;
+      _status = _ModelStatus.needed;
     });
   }
 
@@ -263,6 +449,10 @@ class _WorkspaceState extends State<Workspace> {
 
   Future<void> _readImage({bool recover = false}) async {
     if (_readingImage || _writing) return;
+    if (_attachedPhotos.length >= _maxAttachments) {
+      _notify('이미지는 한 메시지에 최대 $_maxAttachments장까지 첨부할 수 있어요.');
+      return;
+    }
     setState(() => _readingImage = true);
     try {
       final findings = kIsWeb
@@ -274,24 +464,17 @@ class _WorkspaceState extends State<Workspace> {
           ? await _photos.recoverInterruptedPick()
           : await _photos.pickAndAnalyze();
       if (!mounted || findings == null) return;
-      if (!findings.hasFindings) {
-        _notify('사진에서 글자나 물체 후보를 찾지 못했어요.');
-        return;
-      }
-      final reviewed = await showModalBottomSheet<String>(
+      final attached = await showModalBottomSheet<PhotoFindings>(
         context: context,
         isScrollControlled: true,
         useSafeArea: true,
-        builder: (context) => _PhotoReview(findings: findings),
+        builder: (context) => _PhotoReview(
+          findings: findings,
+          pickLocal: kIsWeb ? _photos.pickPreviewImage : null,
+        ),
       );
-      if (!mounted || reviewed == null) return;
-      final draft = _input.text.trim();
-      final combined = draft.isEmpty ? reviewed : '$draft\n\n$reviewed';
-      _input.value = TextEditingValue(
-        text: combined,
-        selection: TextSelection.collapsed(offset: combined.length),
-      );
-      setState(() => _task ??= _Task.scan);
+      if (!mounted || attached == null) return;
+      setState(() => _attachedPhotos.add(attached));
     } on Object catch (error) {
       debugPrint('Photo analysis failure: ${error.runtimeType}');
       _notify('사진을 분석하지 못했어요. 다른 사진을 골라 주세요.');
@@ -304,17 +487,45 @@ class _WorkspaceState extends State<Workspace> {
     final engine = _kanana;
     final draft = _input.text.trim();
     if (_status != _ModelStatus.ready ||
-        draft.isEmpty ||
+        (draft.isEmpty && _attachedPhotos.isEmpty) ||
         _writing ||
         _readingImage) {
       return;
     }
     final task = _task;
-    final text = task == null ? draft : '${task.prompt}\n\n$draft';
+    final parent = _parentTask;
+    final photos = _attachedPhotos.toList();
+    final photoTask = photos.isNotEmpty;
+    final renamed = task == null && !photoTask
+        ? requestedAssistantName(draft)
+        : null;
+    final guarded = task == null && !photoTask ? localSafetyReply(draft) : null;
+    final instruction = [
+      if (task != null) task.prompt,
+      if (photoTask)
+        '사진 자료에서 현재 질문과 관련 있는 정보만 간결하게 정리해. '
+            '대화 캡처라면 결정 사항, 할 일, 담당자, 기한 중 실제로 나온 것만 골라. '
+            '다른 사진은 중요한 항목, 수량, 날짜, 금액만 골라. '
+            '사진 분석용 제목이나 영어 후보 목록은 답변에 반복하지 마. '
+            '물체 후보는 참고 정보야. 확인할 수 있는 내용이 없으면 솔직히 알려 줘.',
+      for (final (index, photo) in photos.indexed)
+        '이미지 ${index + 1} 참고 자료\n${photo.modelContext}',
+    ];
     _input.clear();
     _focus.unfocus();
     setState(() {
-      _messages.add(ChatMessage(isUser: true, text: text));
+      if (renamed != null) _assistantName = renamed;
+      _tasks
+        ..remove(_activeTask)
+        ..insert(0, _activeTask);
+      _messages.add(
+        ChatMessage(
+          isUser: true,
+          text: draft.isEmpty ? '이미지 첨부' : draft,
+          instruction: instruction.isEmpty ? null : instruction.join('\n'),
+        ),
+      );
+      _attachedPhotos.clear();
       _task = null;
       _writing = true;
       _reply = '';
@@ -323,7 +534,21 @@ class _WorkspaceState extends State<Workspace> {
     try {
       await _save();
       if (!mounted || _stopping) return;
-      final response = kIsWeb ? _previewReply(task) : engine!.reply(_messages);
+      final response = renamed != null
+          ? Stream.value('좋아요. 앞으로 “$renamed”라고 불러 주세요.')
+          : guarded != null
+          ? Stream.value(guarded)
+          : kIsWeb
+          ? _previewReply(
+              photoTask ? _Task.scan : task,
+              parent: parent,
+              hasLocalImage: photos.any((photo) => photo.imageBytes != null),
+            )
+          : engine!.reply(
+              _messages,
+              assistantName: _assistantName,
+              parentConversation: parent?.messages ?? const [],
+            );
       await for (final fragment in response) {
         if (!mounted) break;
         setState(() => _reply += fragment);
@@ -332,8 +557,8 @@ class _WorkspaceState extends State<Workspace> {
       if (mounted && !_stopping && _reply.trim().isEmpty) {
         _notify('응답을 만들지 못했어요. 다시 시도해 주세요.');
       }
-    } on PromptTooLong {
-      _notify('글이 너무 길어요. 몇 부분으로 나눠 보내 주세요.');
+    } on PromptTooLong catch (error) {
+      _notify('입력 한도 ${error.limit}토큰을 넘었어요. 글이나 이미지를 나눠 보내 주세요.');
     } on Object catch (error) {
       debugPrint('Generation failure: ${error.runtimeType}');
       if (!_stopping) _notify('응답 생성에 문제가 생겼어요. 다시 시도해 주세요.');
@@ -345,41 +570,60 @@ class _WorkspaceState extends State<Workspace> {
             _messages.removeLast();
             _input.text = draft;
             _task = task;
+            _attachedPhotos.addAll(photos);
           } else {
             _messages.add(ChatMessage(isUser: false, text: reply));
           }
           _reply = '';
+          _writing = false;
+          _stopping = false;
         });
+        _toLatest();
         await _save();
-        if (mounted) {
-          setState(() {
-            _writing = false;
-            _stopping = false;
-          });
-        }
       }
     }
   }
 
-  Stream<String> _previewReply(_Task? task) async* {
+  Stream<String> _previewReply(
+    _Task? task, {
+    ChatTask? parent,
+    bool hasLocalImage = false,
+  }) async* {
     final example = switch (task) {
       _Task.summary =>
         '핵심은 일정과 다음 할 일이에요.\n• 금요일 오후에 초안을 검토해요.\n• 의견을 모아 최종본을 정리해요.',
       _Task.rewrite => '안녕하세요. 이번 주 금요일까지 초안을 검토해 주시면 감사하겠습니다.',
       _Task.draft => '안녕하세요! 보내 주신 내용 확인했어요. 금요일 오후까지 검토해서 답드릴게요.',
-      _Task.scan => '샘플 사진에는 사과와 우유가 분류 후보로 표시되고, 글자에는 사과 2개와 우유 1개가 적혀 있어요.',
-      null => '안녕하세요! 메시지가 채팅창에 표시됐어요. 답변 복사, 응답 중지, 새 작업 시작을 테스트해 보세요.',
+      _Task.scan =>
+        hasLocalImage
+            ? '이미지가 첨부됐어요. 실제 이미지 인식은 모바일 앱에서 확인할 수 있어요.'
+            : '장볼 것\n• 사과 2개\n• 우유 1개',
+      null =>
+        parent == null
+            ? '안녕하세요! 메시지가 채팅창에 표시됐어요. 답변 복사, 응답 중지, 새 작업 시작을 테스트해 보세요.'
+            : '상위 작업 “${parent.title}”의 대화를 참고하도록 연결했어요. 이 답변은 흐름 확인용 샘플이에요.',
     };
-    for (final word in RegExp(r'\S+\s*').allMatches(example)) {
-      await Future<void>.delayed(const Duration(milliseconds: 55));
+    if (MediaQuery.disableAnimationsOf(context)) {
+      yield example;
+      return;
+    }
+    for (final character in example.characters) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
       if (!mounted || _stopping) return;
-      yield word[0]!;
+      yield character;
     }
   }
 
   Future<void> _save() async {
     try {
-      await _history?.write(_messages);
+      await _history?.write(
+        ChatWorkspace(
+          activeId: _activeTask.id,
+          tasks: _tasks,
+          assistantName: _assistantName,
+          generationSize: _manualSize,
+        ),
+      );
     } on Object catch (error) {
       debugPrint('History save failure: ${error.runtimeType}');
       _notify('대화 기록을 저장하지 못했어요.');
@@ -391,13 +635,181 @@ class _WorkspaceState extends State<Workspace> {
     _kanana?.stop();
   }
 
-  Future<void> _clear() async {
+  void _newTask() {
+    if (_writing || _readingImage) return;
+    if (_messages.isEmpty &&
+        _input.text.trim().isEmpty &&
+        _attachedPhotos.isEmpty &&
+        _task == null &&
+        _activeTask.name == null) {
+      return;
+    }
+    final task = ChatTask.create();
+    _tasks.insert(0, task);
+    _openTask(task);
+  }
+
+  void _newChildTask(ChatTask parent) {
+    if (_writing || _readingImage || parent.parentId != null) return;
+    final task = ChatTask.create(parentId: parent.id);
+    _tasks.insert(0, task);
+    _openTask(task);
+  }
+
+  void _openTask(ChatTask task, {bool save = true}) {
+    if (_writing || _readingImage || identical(_activeTask, task)) return;
+    _drafts[_activeTask.id] = (
+      text: _input.text,
+      action: _task,
+      photos: _attachedPhotos.toList(),
+    );
+    final draft = _drafts.remove(task.id);
+    _focus.unfocus();
+    setState(() {
+      _activeTask = task;
+      _task = draft?.action;
+      _input.text = draft?.text ?? '';
+      _attachedPhotos
+        ..clear()
+        ..addAll(draft?.photos ?? const []);
+    });
+    _toLatest(force: true);
+    if (save) unawaited(_save());
+  }
+
+  Future<void> _renameTask(ChatTask task) async {
+    var name = task.title;
+    final updated = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('작업 이름 바꾸기'),
+        content: TextFormField(
+          initialValue: name,
+          autofocus: true,
+          maxLength: 80,
+          decoration: const InputDecoration(labelText: '작업 이름'),
+          onChanged: (value) => name = value,
+          onFieldSubmitted: (value) => Navigator.pop(context, value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('취소'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, name.trim()),
+            child: const Text('저장'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted ||
+        updated == null ||
+        updated.isEmpty ||
+        !_tasks.contains(task)) {
+      return;
+    }
+    setState(() => task.name = updated);
+    await _save();
+  }
+
+  Future<void> _openSettings() async {
+    if (_writing || _readingImage) return;
+    var manual = _manualSize;
+    final memory = _deviceMemory;
+    final picked = await showDialog<({GenerationSize? size})>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, update) {
+          final size = manual ?? _recommendedSize;
+          return AlertDialog(
+            title: const Text('사용자 설정'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    memory == null
+                        ? (kIsWeb ? '웹 미리보기 기본값 · 보통' : '자동 추천 · 작게')
+                        : 'RAM ${(memory.totalBytes / 1e9).toStringAsFixed(1)}GB · '
+                              '사용 가능 ${(memory.availableBytes / 1e9).toStringAsFixed(1)}GB',
+                  ),
+                  SwitchListTile(
+                    title: const Text('기기에 맞게 자동 설정'),
+                    contentPadding: EdgeInsets.zero,
+                    value: manual == null,
+                    onChanged: (automatic) => update(() {
+                      manual = automatic ? null : _recommendedSize;
+                    }),
+                  ),
+                  SegmentedButton<GenerationSize>(
+                    segments: [
+                      for (final item in GenerationSize.values)
+                        ButtonSegment(value: item, label: Text(item.label)),
+                    ],
+                    selected: {size},
+                    onSelectionChanged: (selection) =>
+                        update(() => manual = selection.single),
+                  ),
+                  const SizedBox(height: 14),
+                  Text('입력 최대 ${size.prompt}토큰 · 답변 최대 ${size.reply}토큰'),
+                  const SizedBox(height: 6),
+                  const Text('이미지에서 읽은 글자도 입력 한도에 포함돼요.'),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('취소'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, (size: manual)),
+                child: const Text('저장'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    if (!mounted || picked == null || picked.size == _manualSize || _writing) {
+      return;
+    }
+    final updated = picked.size ?? _recommendedSize;
+    final reload = !kIsWeb && _installed && _kanana?.size != updated;
+    final previous = reload ? _kanana : null;
+    setState(() {
+      _manualSize = picked.size;
+      if (reload) {
+        _kanana = null;
+        _status = _ModelStatus.loading;
+      }
+    });
+    await _save();
+    if (!reload) return;
+    try {
+      await previous?.dispose();
+      if (mounted) await _loadModel();
+    } on Object catch (error) {
+      _modelFailure(error, '모델을 다시 열 수 없어요.');
+    }
+  }
+
+  Future<void> _deleteTask(ChatTask task) async {
+    final removedIds = {
+      task.id,
+      for (final child in _tasks)
+        if (child.parentId == task.id) child.id,
+    };
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('새 작업을 시작할까요?'),
-        content: const Text(
-          kIsWeb ? '현재 미리보기 대화가 지워져요.' : '이 기기에 저장된 현재 대화가 지워져요.',
+        title: const Text('작업을 삭제할까요?'),
+        content: Text(
+          removedIds.length > 1
+              ? '‘${task.title}’과 하위 작업이 함께 삭제돼요.'
+              : '‘${task.title}’의 대화가 삭제돼요.',
         ),
         actions: [
           TextButton(
@@ -406,16 +818,22 @@ class _WorkspaceState extends State<Workspace> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('새 작업'),
+            child: const Text('삭제'),
           ),
         ],
       ),
     );
-    if (!mounted || confirmed != true || _writing) return;
+    if (!mounted || confirmed != true || _writing || _readingImage) return;
+    if (removedIds.contains(_activeTask.id)) {
+      final next = _tasks
+          .where((item) => !removedIds.contains(item.id))
+          .firstOrNull;
+      _openTask(next ?? ChatTask.create(), save: false);
+      if (!_tasks.contains(_activeTask)) _tasks.insert(0, _activeTask);
+    }
     setState(() {
-      _messages.clear();
-      _task = null;
-      _input.clear();
+      _tasks.removeWhere((item) => removedIds.contains(item.id));
+      _drafts.removeWhere((id, _) => removedIds.contains(id));
     });
     await _save();
   }
@@ -432,7 +850,22 @@ class _WorkspaceState extends State<Workspace> {
         force || !_scroll.hasClients || _scroll.position.extentAfter < 100;
     if (!follow) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scroll.hasClients) _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      if (!mounted || !_scroll.hasClients) return;
+      final target = _scroll.position.maxScrollExtent;
+      if (force || MediaQuery.disableAnimationsOf(context)) {
+        _followTarget = null;
+        _scroll.jumpTo(target);
+      } else if (_followTarget != target &&
+          _scroll.position.extentAfter > 0.5) {
+        _followTarget = target;
+        unawaited(
+          _scroll.animateTo(
+            target,
+            duration: const Duration(milliseconds: 130),
+            curve: Curves.easeOutCubic,
+          ),
+        );
+      }
     });
   }
 
@@ -444,62 +877,434 @@ class _WorkspaceState extends State<Workspace> {
     final model = _kanana;
     if (model != null) unawaited(model.dispose());
     _scroll.dispose();
+    _taskSearch.dispose();
     _focus.dispose();
     _input.dispose();
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    body: SafeArea(
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 780),
-          child: Column(
-            children: [
-              _header(),
-              const Divider(height: 1, color: _line),
-              _banner(),
-              Expanded(
-                child: ListView(
-                  controller: _scroll,
-                  padding: const EdgeInsets.fromLTRB(22, 24, 22, 20),
-                  children: [
-                    if (_messages.isEmpty) _welcome(),
-                    if (_status != _ModelStatus.ready) _modelCard(),
-                    if (_messages.isEmpty) _taskGrid(),
-                    for (final message in _messages) _bubble(message),
-                    if (_writing)
-                      if (_reply.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.only(top: 8, bottom: 12),
-                          child: Text(
-                            kIsWeb
-                                ? '샘플 답변을 준비하고 있어요…'
-                                : 'Kanana가 답변을 준비하고 있어요…',
-                            style: TextStyle(color: _muted),
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      if (_status != _ModelStatus.ready) {
+        return _screenTransition(
+          context,
+          Scaffold(
+            key: const ValueKey('setup'),
+            body: SafeArea(child: _setupScreen()),
+          ),
+        );
+      }
+      final wide = constraints.maxWidth >= 940;
+      return _screenTransition(
+        context,
+        Scaffold(
+          key: const ValueKey('workspace'),
+          drawer: wide
+              ? null
+              : Drawer(
+                  width: 298,
+                  backgroundColor: _mint,
+                  child: SafeArea(
+                    child: Builder(
+                      builder: (context) =>
+                          _taskMenu(close: Scaffold.of(context).closeDrawer),
+                    ),
+                  ),
+                ),
+          body: SafeArea(
+            child: Row(
+              children: [
+                if (wide) ...[
+                  SizedBox(width: 260, child: _taskMenu()),
+                  const VerticalDivider(width: 1, color: _line),
+                ],
+                Expanded(
+                  child: Builder(
+                    builder: (context) => _workspace(
+                      openMenu: wide ? null : Scaffold.of(context).openDrawer,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    },
+  );
+
+  Widget _screenTransition(BuildContext context, Widget screen) =>
+      AnimatedSwitcher(
+        duration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 210),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeInCubic,
+        child: screen,
+      );
+
+  Widget _taskMenu({VoidCallback? close}) {
+    final busy = _writing || _readingImage;
+    final query = _taskSearch.text.trim().toLowerCase();
+    final visible = <ChatTask>[];
+    for (final parent in _tasks.where((task) => task.parentId == null)) {
+      final parentMatches = query.isEmpty || _matchesTask(parent, query);
+      final children = _tasks.where(
+        (task) =>
+            task.parentId == parent.id &&
+            (parentMatches || _matchesTask(task, query)),
+      );
+      if (parentMatches || children.isNotEmpty) {
+        visible
+          ..add(parent)
+          ..addAll(children);
+      }
+    }
+    return ColoredBox(
+      color: const Color(0xffe9efe5),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 16, 14, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 0, 0, 12),
+              child: Row(
+                children: [
+                  const _AppMark(),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text(
+                      '내 작업',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  if (close != null)
+                    IconButton(
+                      tooltip: '작업 메뉴 닫기',
+                      onPressed: close,
+                      icon: Icon(
+                        _controlIcon(Icons.close_rounded, CupertinoIcons.xmark),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            FilledButton.icon(
+              onPressed: busy
+                  ? null
+                  : () {
+                      _newTask();
+                      close?.call();
+                    },
+              icon: Icon(_controlIcon(Icons.add_rounded, CupertinoIcons.plus)),
+              label: const Text('새 작업'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _taskSearch,
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
+                isDense: true,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                prefixIcon: Icon(
+                  _controlIcon(Icons.search_rounded, CupertinoIcons.search),
+                  size: 18,
+                ),
+                hintText: '대화 검색',
+                suffixIcon: query.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: '검색 지우기',
+                        onPressed: () => setState(_taskSearch.clear),
+                        icon: Icon(
+                          _controlIcon(
+                            Icons.close_rounded,
+                            CupertinoIcons.xmark,
                           ),
-                        )
-                      else
-                        _bubble(
-                          ChatMessage(isUser: false, text: _reply),
-                          streaming: true,
+                          size: 17,
                         ),
+                      ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(7, 20, 7, 8),
+              child: Text(
+                query.isEmpty ? '최근 작업' : '검색 결과',
+                style: const TextStyle(
+                  color: _muted,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            Expanded(
+              child: visible.isEmpty
+                  ? const Center(child: Text('일치하는 대화가 없어요.'))
+                  : ListView.builder(
+                      itemCount: visible.length,
+                      itemBuilder: (context, index) {
+                        final task = visible[index];
+                        final child = task.parentId != null;
+                        final match = query.isEmpty
+                            ? null
+                            : task.messages
+                                  .where(
+                                    (message) => message.text
+                                        .toLowerCase()
+                                        .contains(query),
+                                  )
+                                  .firstOrNull;
+                        return ListTile(
+                          key: ValueKey(task.id),
+                          selected: identical(task, _activeTask),
+                          selectedTileColor: const Color(0xffd7e6d6),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          contentPadding: EdgeInsets.only(left: child ? 28 : 8),
+                          leading: Icon(
+                            child
+                                ? _controlIcon(
+                                    Icons.chat_bubble_outline_rounded,
+                                    CupertinoIcons.chat_bubble,
+                                  )
+                                : _controlIcon(
+                                    Icons.folder_outlined,
+                                    CupertinoIcons.folder,
+                                  ),
+                            size: 18,
+                          ),
+                          title: Text(
+                            task.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: match == null
+                              ? null
+                              : Text(
+                                  match.text,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                          onTap: busy
+                              ? null
+                              : () {
+                                  _openTask(task);
+                                  close?.call();
+                                },
+                          trailing: PopupMenuButton<_TaskMenuAction>(
+                            tooltip: '작업 옵션',
+                            enabled: !busy,
+                            onSelected: (action) {
+                              switch (action) {
+                                case _TaskMenuAction.createChild:
+                                  _newChildTask(task);
+                                  close?.call();
+                                case _TaskMenuAction.rename:
+                                  unawaited(_renameTask(task));
+                                case _TaskMenuAction.delete:
+                                  unawaited(_deleteTask(task));
+                              }
+                            },
+                            itemBuilder: (context) => [
+                              if (!child)
+                                const PopupMenuItem(
+                                  value: _TaskMenuAction.createChild,
+                                  child: Text('하위 작업 만들기'),
+                                ),
+                              const PopupMenuItem(
+                                value: _TaskMenuAction.rename,
+                                child: Text('이름 바꾸기'),
+                              ),
+                              const PopupMenuItem(
+                                value: _TaskMenuAction.delete,
+                                child: Text('삭제'),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  bool _matchesTask(ChatTask task, String query) =>
+      task.title.toLowerCase().contains(query) ||
+      task.messages.any(
+        (message) => message.text.toLowerCase().contains(query),
+      );
+
+  Widget _setupScreen() {
+    final loading = switch (_status) {
+      _ModelStatus.checking => '모이챗을 준비하고 있어요',
+      _ModelStatus.verifying => '모델 파일을 확인하고 있어요',
+      _ModelStatus.loading => kIsWeb ? '미리보기를 준비하고 있어요' : 'Kanana를 여는 중이에요',
+      _ => null,
+    };
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 460),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const _AppMark(),
+                    const SizedBox(height: 12),
+                    const Text(
+                      '모이챗',
+                      style: TextStyle(
+                        fontSize: 30,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    if (loading == null) ...[
+                      _modelCard(),
+                      if (_status != _ModelStatus.downloading)
+                        TextButton(
+                          onPressed: _openSettings,
+                          child: const Text('사용자 설정'),
+                        ),
+                    ] else
+                      _loadingScreen(loading),
                   ],
                 ),
               ),
-              _composer(),
-            ],
+            ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _workspace({required VoidCallback? openMenu}) => Center(
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 780),
+      child: Column(
+        children: [
+          _header(openMenu: openMenu),
+          const Divider(height: 1, color: _line),
+          if (_parentTask case final parent?)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                child: TextButton.icon(
+                  onPressed: _writing || _readingImage
+                      ? null
+                      : () => _openTask(parent),
+                  icon: Icon(
+                    _controlIcon(
+                      Icons.folder_open_rounded,
+                      CupertinoIcons.folder_open,
+                    ),
+                    size: 17,
+                  ),
+                  label: Text(
+                    '상위 작업 · ${parent.title}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+            ),
+          _banner(),
+          Expanded(
+            child: _taskTransition(
+              ListView(
+                controller: _scroll,
+                padding: const EdgeInsets.fromLTRB(22, 24, 22, 20),
+                children: [
+                  if (_messages.isEmpty) _welcome(),
+                  if (_messages.isEmpty) _taskGrid(),
+                  for (final message in _messages) _bubble(message),
+                  if (_writing)
+                    if (_reply.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8, bottom: 12),
+                        child: Text(
+                          kIsWeb
+                              ? '샘플 답변을 준비하고 있어요…'
+                              : '$_assistantName · 답변 준비 중…',
+                          style: const TextStyle(color: _muted),
+                        ),
+                      )
+                    else
+                      _bubble(
+                        ChatMessage(isUser: false, text: _reply),
+                        streaming: true,
+                      ),
+                ],
+              ),
+            ),
+          ),
+          _composer(),
+        ],
       ),
     ),
   );
 
-  Widget _header() => Padding(
+  Widget _taskTransition(Widget child) => TweenAnimationBuilder<double>(
+    key: ValueKey(_activeTask.id),
+    duration: MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 180),
+    curve: Curves.easeOutCubic,
+    tween: Tween(begin: 0, end: 1),
+    child: child,
+    builder: (context, progress, child) => Opacity(
+      opacity: progress,
+      child: Transform.translate(
+        offset: Offset(0, (1 - progress) * 5),
+        child: child,
+      ),
+    ),
+  );
+
+  Widget _loadingScreen(String label) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const CircularProgressIndicator(),
+          const SizedBox(height: 16),
+          Text(label, textAlign: TextAlign.center),
+        ],
+      ),
+    ),
+  );
+
+  Widget _header({required VoidCallback? openMenu}) => Padding(
     padding: const EdgeInsets.fromLTRB(20, 8, 12, 12),
     child: Row(
       children: [
+        if (openMenu != null)
+          IconButton(
+            tooltip: '작업 메뉴',
+            onPressed: openMenu,
+            icon: Icon(
+              _controlIcon(
+                Icons.menu_rounded,
+                CupertinoIcons.line_horizontal_3,
+              ),
+            ),
+          ),
         const _AppMark(),
         const SizedBox(width: 10),
         const Text(
@@ -519,15 +1324,21 @@ class _WorkspaceState extends State<Workspace> {
               ),
             ),
           ),
-        if (_messages.isNotEmpty)
-          IconButton(
-            tooltip: '새 작업',
-            onPressed: _writing || _readingImage ? null : _clear,
-            icon: const Icon(Icons.add_comment_outlined),
+        IconButton(
+          tooltip: '사용자 설정',
+          onPressed: _writing || _readingImage ? null : _openSettings,
+          icon: Icon(
+            _controlIcon(Icons.settings_outlined, CupertinoIcons.gear),
           ),
+        ),
         IconButton(
           tooltip: '앱 정보 및 라이선스',
-          icon: const Icon(Icons.info_outline_rounded),
+          icon: Icon(
+            _controlIcon(
+              Icons.info_outline_rounded,
+              CupertinoIcons.info_circle,
+            ),
+          ),
           onPressed: () => showAboutDialog(
             context: context,
             applicationName: '모이챗',
@@ -537,6 +1348,16 @@ class _WorkspaceState extends State<Workspace> {
               const Text(
                 'Kanana 1.5 2.1B Instruct · Q4_K_M\n한국어 오프라인 AI 작업 공간',
               ),
+              if (kIsWeb)
+                TextButton(
+                  onPressed: _writing || _readingImage
+                      ? null
+                      : () {
+                          Navigator.of(context).pop();
+                          _resetPreviewDownload();
+                        },
+                  child: const Text('웹 다운로드 다시 테스트'),
+                ),
               if (_ads?.canShowPrivacyOptions ?? false)
                 TextButton(
                   onPressed: () => unawaited(_ads?.showPrivacyOptions()),
@@ -628,14 +1449,20 @@ class _WorkspaceState extends State<Workspace> {
             _ModelStatus.error => '모델을 준비할 수 없어요',
             _ => '오프라인 AI 준비하기',
           };
-    final progress = (_received / ModelStore.bytes).clamp(0.0, 1.0);
+    final progress = (_received / (kIsWeb ? _previewBytes : ModelStore.bytes))
+        .clamp(0.0, 1.0);
+    final speed = _downloadSpeed;
+    final rate = speed == null
+        ? '속도 계산 중'
+        : '${(speed / 1000000).toStringAsFixed(1)} MB/s';
     final details = kIsWeb
         ? downloading
-              ? '${(progress * 100).round()}%'
+              ? '${(progress * 100).round()}% · '
+                    '${(_previewBytes / 18 / _previewTick.inMilliseconds / 1000).toStringAsFixed(1)} MB/s (샘플)'
               : '샘플 다운로드를 완료하면 채팅을 테스트할 수 있어요.'
         : _modelError ??
               (downloading
-                  ? '${(_received / 1000000000).toStringAsFixed(2)} / 1.52 GB'
+                  ? '${(_received / 1000000000).toStringAsFixed(2)} / 1.52 GB · $rate'
                   : 'Kanana · 1.52 GB\n한 번 받으면 인터넷 없이 대화할 수 있어요.');
     return Container(
       margin: const EdgeInsets.only(bottom: 23),
@@ -676,20 +1503,26 @@ class _WorkspaceState extends State<Workspace> {
               onPressed: kIsWeb
                   ? downloading
                         ? _pausePreviewDownload
-                        : _startPreviewDownload
+                        : _requestDownload
                   : downloading
                   ? _store?.pause
                   : _store == null
                   ? _initialize
                   : _installed
                   ? _loadModel
-                  : _downloadModel,
+                  : _requestDownload,
               icon: Icon(
                 downloading
-                    ? Icons.pause_rounded
+                    ? _controlIcon(Icons.pause_rounded, CupertinoIcons.pause)
                     : !kIsWeb && (_installed || _store == null)
-                    ? Icons.refresh_rounded
-                    : Icons.download_rounded,
+                    ? _controlIcon(
+                        Icons.refresh_rounded,
+                        CupertinoIcons.arrow_clockwise,
+                      )
+                    : _controlIcon(
+                        Icons.download_rounded,
+                        CupertinoIcons.arrow_down_to_line,
+                      ),
               ),
               label: Text(
                 downloading
@@ -748,7 +1581,7 @@ class _WorkspaceState extends State<Workspace> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Icon(task.icon, color: _pine, size: 22),
+                            Icon(task.controlIcon, color: _pine, size: 22),
                             const SizedBox(height: 9),
                             Text(
                               task.title,
@@ -789,11 +1622,11 @@ class _WorkspaceState extends State<Workspace> {
               : CrossAxisAlignment.start,
           children: [
             if (!message.isUser)
-              const Padding(
+              Padding(
                 padding: EdgeInsets.only(bottom: 5, left: 3),
                 child: Text(
-                  kIsWeb ? '샘플 답변' : 'Kanana',
-                  style: TextStyle(
+                  kIsWeb ? '$_assistantName · 샘플' : _assistantName,
+                  style: const TextStyle(
                     fontSize: 12,
                     color: _pine,
                     fontWeight: FontWeight.w800,
@@ -801,16 +1634,22 @@ class _WorkspaceState extends State<Workspace> {
                 ),
               ),
             Container(
+              width: message.isUser ? null : double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
               decoration: BoxDecoration(
                 color: message.isUser ? _mint : const Color(0xfffdfcf7),
                 border: Border.all(color: _line),
                 borderRadius: BorderRadius.circular(16),
               ),
-              child: SelectableText(
-                message.text,
-                style: const TextStyle(fontSize: 15, height: 1.58),
-              ),
+              child: streaming
+                  ? Text(
+                      message.text,
+                      style: const TextStyle(fontSize: 15, height: 1.58),
+                    )
+                  : SelectableText(
+                      message.text,
+                      style: const TextStyle(fontSize: 15, height: 1.58),
+                    ),
             ),
             if (!message.isUser && !streaming)
               TextButton.icon(
@@ -818,7 +1657,10 @@ class _WorkspaceState extends State<Workspace> {
                   await Clipboard.setData(ClipboardData(text: message.text));
                   _notify('답변을 복사했어요.');
                 },
-                icon: const Icon(Icons.copy_rounded, size: 15),
+                icon: Icon(
+                  _controlIcon(Icons.copy_rounded, CupertinoIcons.doc_on_doc),
+                  size: 15,
+                ),
                 label: const Text('복사'),
               ),
           ],
@@ -836,14 +1678,44 @@ class _WorkspaceState extends State<Workspace> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (_task case final task?)
+          if (_task != null || _attachedPhotos.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(bottom: 5),
-              child: InputChip(
-                avatar: Icon(task.icon, size: 17),
-                label: Text(task.title),
-                onDeleted: _writing ? null : () => setState(() => _task = null),
-                deleteButtonTooltipMessage: '작업 선택 해제',
+              child: Wrap(
+                spacing: 8,
+                children: [
+                  if (_task case final task?)
+                    InputChip(
+                      avatar: Icon(task.controlIcon, size: 17),
+                      label: Text(task.title),
+                      onDeleted: _writing
+                          ? null
+                          : () => setState(() => _task = null),
+                      deleteButtonTooltipMessage: '작업 선택 해제',
+                    ),
+                  for (final (index, photo) in _attachedPhotos.indexed)
+                    InputChip(
+                      avatar: ClipRRect(
+                        borderRadius: BorderRadius.circular(7),
+                        child: Image(
+                          image: ResizeImage.resizeIfNeeded(
+                            72,
+                            null,
+                            _photoPreview(photo),
+                          ),
+                          width: 26,
+                          height: 26,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                      label: Text('이미지 ${index + 1}'),
+                      onDeleted: _writing
+                          ? null
+                          : () =>
+                                setState(() => _attachedPhotos.removeAt(index)),
+                      deleteButtonTooltipMessage: '첨부 이미지 제거',
+                    ),
+                ],
               ),
             ),
           Container(
@@ -866,7 +1738,12 @@ class _WorkspaceState extends State<Workspace> {
                           dimension: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Icon(Icons.add_photo_alternate_outlined),
+                      : Icon(
+                          _controlIcon(
+                            Icons.add_photo_alternate_outlined,
+                            CupertinoIcons.photo,
+                          ),
+                        ),
                 ),
                 Expanded(
                   child: TextField(
@@ -895,13 +1772,20 @@ class _WorkspaceState extends State<Workspace> {
                               : _stop
                         : _status == _ModelStatus.ready &&
                               !_readingImage &&
-                              value.text.trim().isNotEmpty
+                              (value.text.trim().isNotEmpty ||
+                                  _attachedPhotos.isNotEmpty)
                         ? _send
                         : null,
                     icon: Icon(
                       _writing
-                          ? Icons.stop_rounded
-                          : Icons.arrow_upward_rounded,
+                          ? _controlIcon(
+                              Icons.stop_rounded,
+                              CupertinoIcons.stop_fill,
+                            )
+                          : _controlIcon(
+                              Icons.arrow_upward_rounded,
+                              CupertinoIcons.arrow_up,
+                            ),
                     ),
                   ),
                 ),
@@ -929,60 +1813,80 @@ class _AppMark extends StatelessWidget {
   );
 }
 
+ImageProvider<Object> _photoPreview(PhotoFindings photo) =>
+    switch (photo.imageBytes) {
+      final bytes? => MemoryImage(bytes),
+      null => const AssetImage('assets/preview-groceries.png'),
+    };
+
 class _PhotoReview extends StatefulWidget {
-  const _PhotoReview({required this.findings});
+  const _PhotoReview({required this.findings, this.pickLocal});
   final PhotoFindings findings;
+  final Future<PhotoFindings?> Function()? pickLocal;
 
   @override
   State<_PhotoReview> createState() => _PhotoReviewState();
 }
 
 class _PhotoReviewState extends State<_PhotoReview> {
-  late final _text = TextEditingController(text: widget.findings.transcript);
+  late PhotoFindings _selected = widget.findings;
+  bool _picking = false;
 
-  @override
-  void dispose() {
-    _text.dispose();
-    super.dispose();
+  Future<void> _chooseLocal() async {
+    setState(() => _picking = true);
+    try {
+      final image = await widget.pickLocal!();
+      if (mounted && image != null) setState(() => _selected = image);
+    } on Object {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('이미지를 열 수 없어요.')));
+      }
+    } finally {
+      if (mounted) setState(() => _picking = false);
+    }
   }
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
-    child: SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(22, 22, 22, 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text(
-            kIsWeb ? '샘플 사진 분석 결과' : '사진 분석 결과',
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 7),
-          Text(switch (widget.findings) {
-            PhotoFindings(text: null) => '글자 인식에 실패했어요. 물체 후보를 확인해 주세요.',
-            PhotoFindings(labels: null) => '물체 분류에 실패했어요. 읽은 글자를 확인해 주세요.',
-            _ => '물체 후보와 읽은 글자를 확인하고 수정할 수 있어요.',
-          }),
-          const SizedBox(height: 14),
-          TextField(
-            controller: _text,
-            minLines: 3,
-            maxLines: 7,
-            decoration: const InputDecoration(border: OutlineInputBorder()),
-          ),
-          const SizedBox(height: 14),
-          ValueListenableBuilder<TextEditingValue>(
-            valueListenable: _text,
-            builder: (context, value, _) => FilledButton(
-              onPressed: value.text.trim().isEmpty
-                  ? null
-                  : () => Navigator.pop(context, value.text.trim()),
-              child: const Text('입력창에 추가'),
+  Widget build(BuildContext context) => SingleChildScrollView(
+    padding: const EdgeInsets.fromLTRB(22, 22, 22, 24),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          '이미지',
+          style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 14),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 300),
+            child: Image(
+              image: ResizeImage.resizeIfNeeded(
+                900,
+                null,
+                _photoPreview(_selected),
+              ),
+              semanticLabel: _selected.imageBytes == null
+                  ? '샘플 장보기 목록 이미지'
+                  : '첨부할 이미지',
+              fit: BoxFit.contain,
             ),
           ),
-        ],
-      ),
+        ),
+        const SizedBox(height: 14),
+        if (widget.pickLocal != null)
+          TextButton(
+            onPressed: _picking ? null : _chooseLocal,
+            child: const Text('내 이미지 선택'),
+          ),
+        FilledButton(
+          onPressed: _picking ? null : () => Navigator.pop(context, _selected),
+          child: const Text('이미지 추가하기'),
+        ),
+      ],
     ),
   );
 }

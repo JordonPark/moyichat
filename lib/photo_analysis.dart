@@ -6,13 +6,26 @@ class PhotoAnalysis {
   static const _channel = MethodChannel('moyichat/photos');
 
   Future<PhotoFindings?> pickAndAnalyze() async {
-    final image = await _picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 2400,
-      maxHeight: 2400,
-      requestFullMetadata: false,
-    );
+    final image = await _pickImage();
     return image == null ? null : _recognize(image);
+  }
+
+  Future<XFile?> _pickImage() => _picker.pickImage(
+    source: ImageSource.gallery,
+    maxWidth: 2400,
+    maxHeight: 2400,
+    requestFullMetadata: false,
+  );
+
+  Future<PhotoFindings?> pickPreviewImage() async {
+    final image = await _pickImage();
+    return image == null
+        ? null
+        : PhotoFindings(
+            text: null,
+            labels: null,
+            imageBytes: await image.readAsBytes(),
+          );
   }
 
   Future<PhotoFindings?> recoverInterruptedPick() async {
@@ -28,6 +41,7 @@ class PhotoAnalysis {
       image.path,
     );
     return PhotoFindings(
+      imageBytes: await image.readAsBytes(),
       text: (result?['text'] as String?)?.trim(),
       labels: (result?['labels'] as List<Object?>?)
           ?.whereType<String>()
@@ -37,18 +51,20 @@ class PhotoAnalysis {
 }
 
 class PhotoFindings {
-  const PhotoFindings({required this.text, required this.labels});
+  const PhotoFindings({
+    required this.text,
+    required this.labels,
+    this.imageBytes,
+  });
 
   // A null field indicates that its recognizer failed.
   final String? text;
   final List<String>? labels;
+  final Uint8List? imageBytes;
 
-  bool get hasFindings =>
-      (text?.isNotEmpty ?? false) || (labels?.isNotEmpty ?? false);
-
-  String get transcript => [
+  String get modelContext => [
+    if (text case final value? when value.isNotEmpty) '인식된 내용: $value',
     if (labels case final values? when values.isNotEmpty)
-      '사진 분류 후보\n${values.join(', ')}',
-    if (text case final value? when value.isNotEmpty) '사진에서 읽은 글자\n$value',
-  ].join('\n\n');
+      '참고용 물체 후보: ${values.join(', ')}',
+  ].join('\n');
 }

@@ -19,6 +19,12 @@ void main() {
     await directory.delete(recursive: true);
   });
 
+  test('download consent is saved for a fresh model store', () async {
+    expect(await store.hasDownloadConsent(), isFalse);
+    await store.acceptDownload();
+    expect(await ModelStore(directory).hasDownloadConsent(), isTrue);
+  });
+
   test('resumes an interrupted download at the saved byte offset', () async {
     final partial = File('${store.model.path}.part');
     await partial.writeAsBytes([1, 2, 3]);

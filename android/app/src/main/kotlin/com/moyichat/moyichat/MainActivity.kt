@@ -1,5 +1,6 @@
 package com.moyichat.moyichat
 
+import android.app.ActivityManager
 import android.net.Uri
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
@@ -18,6 +19,21 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "moyichat/device")
+            .setMethodCallHandler { call, result ->
+                if (call.method == "memory") {
+                    val manager = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+                    val memory = ActivityManager.MemoryInfo()
+                    manager.getMemoryInfo(memory)
+                    result.success(mapOf(
+                        "total" to memory.totalMem,
+                        "available" to memory.availMem,
+                        "low" to memory.lowMemory
+                    ))
+                } else {
+                    result.notImplemented()
+                }
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "moyichat/photos")
             .setMethodCallHandler { call, result ->
                 if (call.method != "analyze") {

@@ -25,6 +25,18 @@ class ModelStore {
 
   File get model => File.fromUri(directory.uri.resolve(fileName));
   File get _partial => File('${model.path}.part');
+  File get _consent => File('${model.path}.consent');
+  String get _consentVersion => 'model-download-v1:$digest';
+
+  Future<bool> hasDownloadConsent() async =>
+      await _consent.exists() &&
+      await _consent.readAsString() == _consentVersion;
+
+  Future<void> acceptDownload() async {
+    final temporary = File('${_consent.path}.tmp');
+    await temporary.writeAsString(_consentVersion, flush: true);
+    await temporary.rename(_consent.path);
+  }
 
   Future<bool> isInstalled() async =>
       await model.exists() && await model.length() == bytes;
