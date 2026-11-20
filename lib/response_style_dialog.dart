@@ -5,8 +5,7 @@ enum _ResponseOption {
   concise('짧고 간결하게', '짧고 간결하게 답해 줘.'),
   summaryFirst('핵심부터', '핵심을 먼저 말해 줘.'),
   plainLanguage('쉬운 말로', '쉬운 말로 설명해 줘.'),
-  steps('단계별로', '필요할 때 단계별로 정리해 줘.'),
-  examples('예시 포함', '도움이 되는 예시를 덧붙여 줘.');
+  steps('단계별로', '필요할 때 단계별로 정리해 줘.');
 
   const _ResponseOption(this.label, this.instruction);
 
@@ -30,8 +29,6 @@ class ResponseStyleDialog extends StatefulWidget {
 
 class _ResponseStyleDialogState extends State<ResponseStyleDialog> {
   late final Set<_ResponseOption> _selected;
-  late String _custom;
-  late bool _useCustom;
 
   @override
   void initState() {
@@ -41,12 +38,6 @@ class _ResponseStyleDialogState extends State<ResponseStyleDialog> {
       for (final option in _ResponseOption.values)
         if (lines.contains(option.instruction)) option,
     };
-    final presetLines = _selected.map((option) => option.instruction).toSet();
-    _custom = lines
-        .where((line) => !presetLines.contains(line))
-        .join('\n')
-        .trim();
-    _useCustom = _custom.isNotEmpty;
   }
 
   @override
@@ -78,27 +69,6 @@ class _ResponseStyleDialogState extends State<ResponseStyleDialog> {
                 }
               }),
             ),
-          CheckboxListTile(
-            title: const Text('직접 입력'),
-            contentPadding: EdgeInsets.zero,
-            controlAffinity: ListTileControlAffinity.leading,
-            value: _useCustom,
-            onChanged: (checked) =>
-                setState(() => _useCustom = checked == true),
-          ),
-          if (_useCustom)
-            TextFormField(
-              initialValue: _custom,
-              maxLength: 160,
-              minLines: 2,
-              maxLines: 4,
-              onChanged: (text) => _custom = text,
-              decoration: const InputDecoration(
-                labelText: '추가 지침',
-                hintText: '글쓰기 코치처럼 답해 줘.',
-                border: OutlineInputBorder(),
-              ),
-            ),
         ],
       ),
       actions: [
@@ -111,7 +81,6 @@ class _ResponseStyleDialogState extends State<ResponseStyleDialog> {
             final instructions = [
               for (final option in _ResponseOption.values)
                 if (_selected.contains(option)) option.instruction,
-              if (_useCustom && _custom.trim().isNotEmpty) _custom.trim(),
             ];
             Navigator.pop(context, instructions.join('\n'));
           },
