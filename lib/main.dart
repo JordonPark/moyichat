@@ -22,6 +22,7 @@ import 'photo_analysis.dart';
 import 'preview_storage_stub.dart'
     if (dart.library.js_interop) 'preview_storage.dart';
 import 'reply_markdown.dart';
+import 'response_style_dialog.dart';
 import 'workspace_layout.dart';
 
 const _paper = Color(0xfff8f5eb);
@@ -876,51 +877,17 @@ class _WorkspaceState extends State<Workspace> {
 
   Future<void> _editResponseStyle({ChatTask? task}) async {
     final initial = task == null ? _assistantStyle : task.responseStyle;
-    var draft = initial ?? '';
     final value = await showDialog<String>(
       context: context,
       anchorPoint: MediaQuery.sizeOf(context).topRight(Offset.zero),
-      builder: (context) => AlertDialog(
-        scrollable: true,
-        title: Text(task == null ? '내 AI의 답변 방식' : '이 작업의 답변 방식'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              task == null
-                  ? '기본 역할, 말투, 답변 형식을 정해 보세요.'
-                  : '비워 두면 상위 작업이나 내 AI의 기본 방식을 따라요.',
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              initialValue: draft,
-              maxLength: 160,
-              minLines: 2,
-              maxLines: 4,
-              onChanged: (text) => draft = text,
-              decoration: const InputDecoration(
-                labelText: '답변 방식',
-                hintText: '예: 글쓰기 코치처럼 존댓말로 답해 줘. 마지막에 수정 예시를 하나 보여 줘.',
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('취소'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, draft.trim()),
-            child: const Text('적용'),
-          ),
-        ],
-      ),
+      builder: (context) =>
+          ResponseStyleDialog(initial: initial, forTask: task != null),
     );
-    if (!mounted || value == null) return;
+    if (!mounted || value == null || (task != null && !_tasks.contains(task))) {
+      return;
+    }
     final style = value.isEmpty ? null : value;
+    if (style == initial) return;
     setState(() {
       if (task == null) {
         _assistantStyle = style;
@@ -974,7 +941,7 @@ class _WorkspaceState extends State<Workspace> {
                     contentPadding: EdgeInsets.zero,
                     title: const Text('내 AI의 답변 방식'),
                     subtitle: Text(
-                      _assistantStyle ?? '역할, 말투, 답변 형식 정하기',
+                      _assistantStyle ?? '말투와 답변 형식 선택',
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
