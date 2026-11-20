@@ -70,6 +70,7 @@ class Kanana {
     List<ChatMessage> conversation, {
     String assistantName = defaultAssistantName,
     List<ChatMessage> parentConversation = const [],
+    bool extractFacts = false,
   }) async* {
     _stopped = false;
     final parent = await _parentExcerpt(parentConversation);
@@ -113,7 +114,10 @@ class Kanana {
             LlamaChatMessage.fromText(role: LlamaChatRole.system, text: system),
             ...recent.reversed,
           ],
-          params: GenerationParams(maxTokens: size.reply, temp: 0.65),
+          params: GenerationParams(
+            maxTokens: size.reply,
+            temp: extractFacts ? 0.1 : 0.65,
+          ),
           enableThinking: false,
         )
         .textDeltas();

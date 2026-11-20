@@ -18,15 +18,14 @@ class PhotoAnalysis {
   );
 
   Future<PhotoFindings?> pickPreviewImage() async {
-    final image = await _pickImage();
-    return image == null
+    final bytes = await pickImageBytes();
+    return bytes == null
         ? null
-        : PhotoFindings(
-            text: null,
-            labels: null,
-            imageBytes: await image.readAsBytes(),
-          );
+        : PhotoFindings(text: null, labels: null, imageBytes: bytes);
   }
+
+  Future<Uint8List?> pickImageBytes() async =>
+      (await _pickImage())?.readAsBytes();
 
   Future<PhotoFindings?> recoverInterruptedPick() async {
     final response = await _picker.retrieveLostData();

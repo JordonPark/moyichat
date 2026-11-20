@@ -56,18 +56,21 @@ class ChatWorkspace {
     required this.tasks,
     this.assistantName = defaultAssistantName,
     this.generationSize,
+    this.assistantAvatar,
   });
 
   final String activeId;
   final List<ChatTask> tasks;
   final String assistantName;
   final GenerationSize? generationSize;
+  final String? assistantAvatar;
 
   Map<String, Object> toJson() => {
     'activeId': activeId,
     'tasks': tasks.map((task) => task.toJson()).toList(),
     'assistantName': assistantName,
     'generationSize': ?generationSize?.name,
+    'assistantAvatar': ?assistantAvatar,
   };
 
   factory ChatWorkspace.fromJson(Object? value) {
@@ -82,6 +85,7 @@ class ChatWorkspace {
     return ChatWorkspace(
       activeId: data['activeId'] as String,
       assistantName: data['assistantName'] as String? ?? defaultAssistantName,
+      assistantAvatar: data['assistantAvatar'] as String?,
       generationSize: GenerationSize.values
           .where((size) => size.name == data['generationSize'])
           .firstOrNull,

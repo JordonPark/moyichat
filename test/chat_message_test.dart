@@ -44,6 +44,12 @@ void main() {
     expect(requestedAssistantName('네 이름이 뭐야?'), isNull);
   });
 
+  test('direct profile photo commands open the photo picker', () {
+    expect(requestsAssistantAvatar('프로필 사진 바꿔줘'), isTrue);
+    expect(requestsAssistantAvatar('이 사진을 프로필로 설정해줘'), isTrue);
+    expect(requestsAssistantAvatar('프로필 사진 바꾸는 방법 알려줘'), isFalse);
+  });
+
   test(
     'workspace retains hierarchy, assistant name, and manual generation size',
     () {
@@ -54,6 +60,7 @@ void main() {
         tasks: [parent, child],
         assistantName: '루나',
         generationSize: GenerationSize.small,
+        assistantAvatar: 'profile-png',
       );
       final restored = ChatWorkspace.fromJson(workspace.toJson());
 
@@ -61,6 +68,7 @@ void main() {
       expect(restored.activeId, restored.tasks.last.id);
       expect(restored.assistantName, '루나');
       expect(restored.generationSize, GenerationSize.small);
+      expect(restored.assistantAvatar, 'profile-png');
     },
   );
 

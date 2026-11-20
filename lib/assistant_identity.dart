@@ -19,3 +19,12 @@ String? requestedAssistantName(String message) {
   }
   return null;
 }
+
+final _avatarRequest = RegExp(
+  r'^(?:(?:이\s*(?:사진|이미지)(?:을|를|로)?|너(?:의)?|챗봇의?)\s*)?'
+  r'프로필(?:\s*(?:사진|이미지))?(?:을|를|으로|로)?\s*'
+  r'(?:바꿔|변경해|교체해|설정해)\s*줘[.!]?$',
+);
+
+bool requestsAssistantAvatar(String message) =>
+    _avatarRequest.hasMatch(message.trim());

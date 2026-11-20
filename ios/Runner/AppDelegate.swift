@@ -70,8 +70,7 @@ import os
 
     var findings: [String: Any] = [:]
     if (try? source.perform([text])) != nil {
-      let lines = text.results?.compactMap { $0.topCandidates(1).first?.string } ?? []
-      findings["text"] = lines.joined(separator: "\n")
+      findings["text"] = readingOrder(text.results ?? [])
     }
     if (try? source.perform([classification])) != nil {
       let candidates = (classification.results ?? [])
@@ -84,5 +83,24 @@ import os
       return FlutterError(code: "analysis_failed", message: "Image analysis failed.", details: nil)
     }
     return findings
+  }
+
+  private static func readingOrder(_ observations: [VNRecognizedTextObservation]) -> String {
+    let lines = observations.compactMap { observation -> (text: String, bounds: CGRect)? in
+      guard let text = observation.topCandidates(1).first?.string else { return nil }
+      return (text, observation.boundingBox)
+    }.sorted { $0.bounds.midY > $1.bounds.midY }
+    var rows: [[(text: String, bounds: CGRect)]] = []
+    for line in lines {
+      if let reference = rows.last?.first?.bounds,
+         abs(reference.midY - line.bounds.midY) <= min(reference.height, line.bounds.height) * 0.55 {
+        rows[rows.count - 1].append(line)
+      } else {
+        rows.append([line])
+      }
+    }
+    return rows.map { row in
+      row.sorted { $0.bounds.minX < $1.bounds.minX }.map { $0.text }.joined(separator: " ")
+    }.joined(separator: "\n")
   }
 }

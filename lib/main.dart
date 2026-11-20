@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:cupertino_ui/cupertino_ui.dart' show CupertinoIcons;
@@ -8,6 +9,7 @@ import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'assistant_avatar.dart';
 import 'assistant_identity.dart';
 import 'chat_history.dart';
 import 'conversation_safety.dart';
@@ -63,6 +65,7 @@ class MoyiChat extends StatelessWidget {
       ),
       snackBarTheme: const SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
+        insetPadding: EdgeInsets.fromLTRB(16, 0, 16, 84),
       ),
     ),
     home: const Workspace(),
@@ -159,6 +162,7 @@ class _WorkspaceState extends State<Workspace> {
   bool _previewConsent = false;
   String _reply = '';
   String _assistantName = defaultAssistantName;
+  Uint8List? _assistantAvatar;
   GenerationSize? _manualSize;
   DeviceMemory? _deviceMemory;
 
@@ -276,6 +280,13 @@ class _WorkspaceState extends State<Workspace> {
 
   void _restoreTasks(ChatWorkspace saved) {
     _assistantName = saved.assistantName;
+    if (saved.assistantAvatar case final value?) {
+      try {
+        _assistantAvatar = base64Decode(value);
+      } on FormatException {
+        _assistantAvatar = null;
+      }
+    }
     _manualSize = saved.generationSize;
     if (saved.tasks.isEmpty) return;
     _tasks
@@ -501,6 +512,15 @@ class _WorkspaceState extends State<Workspace> {
       return;
     }
     final task = _task;
+    if (task == null && requestsAssistantAvatar(draft)) {
+      await _changeAssistantAvatar(
+        command: draft,
+        source: _attachedPhotos.length == 1
+            ? _attachedPhotos.single.imageBytes
+            : null,
+      );
+      return;
+    }
     final parent = _parentTask;
     final photos = _attachedPhotos.toList();
     final photoTask = photos.isNotEmpty;
@@ -513,7 +533,8 @@ class _WorkspaceState extends State<Workspace> {
       if (photoTask)
         '사진 자료에서 현재 질문과 관련 있는 정보만 간결하게 정리해. '
             '대화 캡처라면 결정 사항, 할 일, 담당자, 기한 중 실제로 나온 것만 골라. '
-            '다른 사진은 중요한 항목, 수량, 날짜, 금액만 골라. '
+            '목록에서는 항목과 같은 줄에 있는 수량을 그대로 짝지어. '
+            '제목과 인사말, 기타 설명은 빼고 확인한 정보만 짧은 목록으로 답해. '
             '사진 분석용 제목이나 영어 후보 목록은 답변에 반복하지 마. '
             '물체 후보는 참고 정보야. 확인할 수 있는 내용이 없으면 솔직히 알려 줘.',
       for (final (index, photo) in photos.indexed)
@@ -556,6 +577,7 @@ class _WorkspaceState extends State<Workspace> {
               _messages,
               assistantName: _assistantName,
               parentConversation: parent?.messages ?? const [],
+              extractFacts: photoTask,
             );
       await for (final fragment in response) {
         if (!mounted) break;
@@ -589,6 +611,44 @@ class _WorkspaceState extends State<Workspace> {
         _toLatest();
         await _save();
       }
+    }
+  }
+
+  Future<void> _changeAssistantAvatar({
+    String? command,
+    Uint8List? source,
+  }) async {
+    if (_readingImage || _writing) return;
+    setState(() => _readingImage = true);
+    try {
+      final bytes = source ?? await _photos.pickImageBytes();
+      if (!mounted || bytes == null) return;
+      final avatar = await makeAssistantAvatar(bytes);
+      if (!mounted) return;
+      setState(() {
+        _assistantAvatar = avatar;
+        if (command != null) {
+          _tasks
+            ..remove(_activeTask)
+            ..insert(0, _activeTask);
+          _input.clear();
+          _attachedPhotos.clear();
+          _messages.addAll([
+            ChatMessage(isUser: true, text: command),
+            const ChatMessage(isUser: false, text: '프로필 사진을 바꿨어요.'),
+          ]);
+        }
+      });
+      if (command != null) {
+        _focus.unfocus();
+        _toLatest(force: true);
+      }
+      await _save();
+    } on Object catch (error) {
+      debugPrint('Profile photo failure: ${error.runtimeType}');
+      _notify('프로필 사진을 읽을 수 없어요. 다른 사진을 골라 주세요.');
+    } finally {
+      if (mounted) setState(() => _readingImage = false);
     }
   }
 
@@ -630,6 +690,9 @@ class _WorkspaceState extends State<Workspace> {
           tasks: _tasks,
           assistantName: _assistantName,
           generationSize: _manualSize,
+          assistantAvatar: _assistantAvatar == null
+              ? null
+              : base64Encode(_assistantAvatar!),
         ),
       );
     } on Object catch (error) {
@@ -737,6 +800,24 @@ class _WorkspaceState extends State<Workspace> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: _assistantPortrait(38),
+                    title: const Text('챗봇 프로필 사진'),
+                    trailing: TextButton(
+                      onPressed: _readingImage
+                          ? null
+                          : () async {
+                              final operation = _changeAssistantAvatar();
+                              update(() {});
+                              await operation;
+                              if (context.mounted) update(() {});
+                            },
+                      child: const Text('사진 바꾸기'),
+                    ),
+                  ),
+                  const Divider(height: 20),
                   Text(
                     memory == null
                         ? (kIsWeb ? '웹 미리보기 기본값 · 보통' : '자동 추천 · 작게')
@@ -1675,14 +1756,23 @@ class _WorkspaceState extends State<Workspace> {
           children: [
             if (!message.isUser)
               Padding(
-                padding: EdgeInsets.only(bottom: 5, left: 3),
-                child: Text(
-                  kIsWeb ? '$_assistantName · 샘플' : _assistantName,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: _pine,
-                    fontWeight: FontWeight.w800,
-                  ),
+                padding: const EdgeInsets.only(bottom: 7, left: 3),
+                child: Row(
+                  children: [
+                    _assistantPortrait(26),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        kIsWeb ? '$_assistantName · 샘플' : _assistantName,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: _pine,
+                          fontWeight: FontWeight.w800,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             Container(
@@ -1718,6 +1808,23 @@ class _WorkspaceState extends State<Workspace> {
           ],
         ),
       ),
+    ),
+  );
+
+  Widget _assistantPortrait(double size) => ClipOval(
+    child: SizedBox.square(
+      dimension: size,
+      child: switch (_assistantAvatar) {
+        final bytes? => Image.memory(
+          bytes,
+          fit: BoxFit.cover,
+          semanticLabel: '$_assistantName 프로필 사진',
+        ),
+        null => ColoredBox(
+          color: _mint,
+          child: Center(child: _MoyiIllustration(width: size * .88)),
+        ),
+      },
     ),
   );
 
@@ -1879,10 +1986,11 @@ class _AppMark extends StatelessWidget {
     width: 35,
     height: 35,
     decoration: BoxDecoration(
-      color: _pine,
+      color: _mint,
       borderRadius: BorderRadius.circular(11),
     ),
-    child: const Icon(Icons.forum_outlined, size: 18, color: _mint),
+    padding: const EdgeInsets.all(3),
+    child: const _MoyiIllustration(width: 29),
   );
 }
 
