@@ -52,7 +52,7 @@ flutter build ios
 
 ## 앱 내 업데이트
 
-Shorebird로 만든 첫 설치본을 배포한 뒤 **사용자 설정 → 앱 업데이트 → 업데이트 확인 및 받기**에서 패치를 받을 수 있다. 사용자가 요청할 때 인터넷으로 패치를 확인하고, 받은 패치는 앱을 다시 실행할 때 적용된다.
+Shorebird로 만든 첫 설치본에서 **사용자 설정 → 앱 업데이트**를 열면 인터넷으로 새 패치를 확인한다. 패치가 있으면 **업데이트 받기**가 표시되고, 받은 패치는 앱을 다시 실행할 때 적용된다.
 
 1. Shorebird에서 모이챗을 등록한다. 프로젝트 폴더에서 `shorebird login`과 `shorebird init --display-name MoyiChat`을 실행하면 `shorebird.yaml`에 앱 ID가 생성된다. [Shorebird 등록 안내](https://docs.shorebird.dev/code-push/initialize/)
 2. GitHub 저장소의 Actions 변수에 앱 ID를 `SHOREBIRD_APP_ID`로, Actions 시크릿에 배포용 API 키를 `SHOREBIRD_TOKEN`으로 저장한다. [Shorebird API 키 안내](https://docs.shorebird.dev/account/api-keys/)
