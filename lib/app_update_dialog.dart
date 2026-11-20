@@ -2,16 +2,18 @@ import 'package:material_ui/material_ui.dart';
 import 'package:shorebird_code_push/shorebird_code_push.dart';
 
 class AppUpdateDialog extends StatefulWidget {
-  const AppUpdateDialog({super.key});
+  const AppUpdateDialog({super.key, this.updater});
+
+  final ShorebirdUpdater? updater;
 
   @override
   State<AppUpdateDialog> createState() => _AppUpdateDialogState();
 }
 
 class _AppUpdateDialogState extends State<AppUpdateDialog> {
-  final _updater = ShorebirdUpdater();
+  late final _updater = widget.updater ?? ShorebirdUpdater();
   bool _busy = false;
-  bool _restartRequired = false;
+  UpdateStatus? _result;
   String? _message;
 
   Future<void> _checkAndDownload() async {
@@ -28,9 +30,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
       }
       if (!mounted) return;
       setState(() {
-        _restartRequired =
-            status == UpdateStatus.restartRequired ||
-            status == UpdateStatus.outdated;
+        _result = status;
         _message = switch (status) {
           UpdateStatus.restartRequired ||
           UpdateStatus.outdated => '업데이트를 받았어요. 앱을 다시 열면 적용돼요.',
@@ -79,7 +79,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
             onPressed: _busy ? null : () => Navigator.pop(context),
             child: const Text('닫기'),
           ),
-          if (_updater.isAvailable && !_restartRequired)
+          if (_updater.isAvailable && _result == null)
             FilledButton(
               onPressed: _busy ? null : _checkAndDownload,
               child: const Text('업데이트 확인 및 받기'),
