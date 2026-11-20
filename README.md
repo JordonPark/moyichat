@@ -56,7 +56,7 @@ Shorebird로 만든 첫 설치본을 배포한 뒤 **사용자 설정 → 앱 �
 
 1. Shorebird에서 모이챗을 등록한다. 프로젝트 폴더에서 `shorebird login`과 `shorebird init --display-name MoyiChat`을 실행하면 `shorebird.yaml`에 앱 ID가 생성된다. [Shorebird 등록 안내](https://docs.shorebird.dev/code-push/initialize/)
 2. GitHub 저장소의 Actions 변수에 앱 ID를 `SHOREBIRD_APP_ID`로, Actions 시크릿에 배포용 API 키를 `SHOREBIRD_TOKEN`으로 저장한다. [Shorebird API 키 안내](https://docs.shorebird.dev/account/api-keys/)
-3. **MoyiChat OTA** 워크플로에서 플랫폼과 `release`를 선택해 첫 설치본을 빌드한다. 이 워크플로는 Shorebird의 Flutter 3.50.0을 사용한다. Android APK는 테스트용 서명으로 생성되며, iOS 아카이브는 Apple 배포 서명과 TestFlight 업로드가 필요하다.
+3. **MoyiChat OTA** 워크플로에서 플랫폼과 `release`를 선택해 첫 설치본을 빌드한다. 이 워크플로는 Shorebird의 Flutter 3.50.0을 사용한다. Android APK는 테스트용 서명으로 생성되며, iOS 아카이브는 Apple 배포 서명과 TestFlight 업로드가 필요하다. iOS 아카이브를 내보낼 때는 `Manage Version and Build Number`를 끄고 Shorebird에 등록된 빌드 번호를 유지한다.
 4. 코드 수정 후 `patch`와 설치된 정확한 버전(예를 들어 `0.1.0+2`)을 선택한다. `staging`에 먼저 올려 검증하고 Shorebird에서 `stable`로 승격하면 앱 설정에서 받을 수 있다. 네이티브 모듈이나 Flutter 엔진이 바뀌면 새 설치본을 배포한다. iOS는 기능을 바꾸는 변경에 App Store 심사 요건을 적용한다. [Shorebird 패치 안내](https://docs.shorebird.dev/code-push/patch/) · [Apple 심사 지침 2.5.2](https://developer.apple.com/app-store/review/guidelines/#software-requirements)
 
 ## 온라인 광고

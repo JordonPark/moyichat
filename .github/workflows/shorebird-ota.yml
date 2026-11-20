@@ -127,4 +127,9 @@ jobs:
           RELEASE_VERSION: ${{ inputs.release_version }}
           TRACK: ${{ inputs.track }}
         run: |
-          shorebird patch "$PLATFORM" --release-version="$RELEASE_VERSION" --track="$TRACK"
+          signing_args=()
+          if [[ "$PLATFORM" == ios ]]; then
+            signing_args+=(--no-codesign)
+          fi
+          shorebird patch "$PLATFORM" --release-version="$RELEASE_VERSION" \
+            --track="$TRACK" "${signing_args[@]}"
