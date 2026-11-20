@@ -942,6 +942,7 @@ class _WorkspaceState extends State<Workspace> {
         builder: (context, update) {
           final size = manual ?? _recommendedSize;
           return AlertDialog(
+            insetPadding: const EdgeInsets.all(24),
             title: const Text('사용자 설정'),
             content: SingleChildScrollView(
               child: Column(
