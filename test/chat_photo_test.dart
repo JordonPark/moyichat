@@ -37,28 +37,89 @@ void main() {
     },
   );
 
-  testWidgets('tapping a photo opens a zoomable viewer', (tester) async {
+  testWidgets('photo follows a pull and shrinks back to its thumbnail', (
+    tester,
+  ) async {
     final bytes = await tester.runAsync(
       () => File('assets/preview-groceries.png').readAsBytes(),
     );
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: ChatPhotoThumbnail(
-            photoId: 'id',
-            number: 1,
-            load: (_) async => bytes,
+          body: Align(
+            alignment: const Alignment(.75, .6),
+            child: ChatPhotoThumbnail(
+              photoId: 'id',
+              number: 1,
+              load: (_) async => bytes,
+            ),
           ),
         ),
       ),
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byType(ChatPhotoThumbnail));
+    final thumbnail = find.byType(ChatPhotoThumbnail);
+    await tester.tap(thumbnail);
     await tester.pumpAndSettle();
     final viewer = find.byType(InteractiveViewer);
     expect(viewer, findsOneWidget);
     expect(tester.widget<InteractiveViewer>(viewer).maxScale, 5);
+    final photo = find.descendant(of: viewer, matching: find.byType(Image));
+    final original = tester.getRect(photo);
+
+    final shortPull = await tester.startGesture(original.center);
+    await shortPull.moveBy(const Offset(0, 30));
+    await shortPull.moveBy(const Offset(0, 24));
+    await tester.pump();
+    expect(tester.getRect(photo).center.dy, greaterThan(original.center.dy));
+    expect(tester.getSize(photo).width, lessThan(original.width));
+    await shortPull.up();
+    await tester.pumpAndSettle();
+    expect(tester.getRect(photo), original);
+
+    final dismissPull = await tester.startGesture(original.center);
+    await dismissPull.moveBy(const Offset(0, 35));
+    await dismissPull.moveBy(const Offset(0, 170));
+    await tester.pump();
+    final pulled = tester.getRect(photo);
+    await dismissPull.up();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 120));
+    expect(tester.getSize(photo).width, lessThan(pulled.width));
+    expect(tester.getRect(photo).center.dx, greaterThan(pulled.center.dx));
+    await tester.pumpAndSettle();
+    expect(viewer, findsNothing);
+    expect(thumbnail, findsOneWidget);
+
+    await tester.tap(thumbnail);
+    await tester.pumpAndSettle();
+    final first = await tester.startGesture(
+      original.center - const Offset(50, 0),
+    );
+    final second = await tester.startGesture(
+      original.center + const Offset(50, 0),
+    );
+    await first.moveBy(const Offset(-45, 0));
+    await second.moveBy(const Offset(45, 0));
+    await first.moveBy(const Offset(-35, 0));
+    await second.moveBy(const Offset(35, 0));
+    await first.up();
+    await second.up();
+    await tester.pumpAndSettle();
+    final controller = tester
+        .widget<InteractiveViewer>(viewer)
+        .transformationController!;
+    expect(controller.value.getMaxScaleOnAxis(), greaterThan(1));
+
+    final beforePan = controller.value.getTranslation().y;
+    final pan = await tester.startGesture(original.center);
+    await pan.moveBy(const Offset(0, 35));
+    await pan.moveBy(const Offset(0, 170));
+    await pan.up();
+    await tester.pumpAndSettle();
+    expect(viewer, findsOneWidget);
+    expect(controller.value.getTranslation().y, greaterThan(beforePan));
 
     await tester.tap(find.byTooltip('사진 닫기'));
     await tester.pumpAndSettle();
