@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shorebird_code_push/shorebird_code_push.dart';
 
 import 'app_update_dialog.dart';
 import 'assistant_avatar.dart';
@@ -33,6 +34,7 @@ const _pine = Color(0xff20513d);
 const _line = Color(0xffdcded1);
 const _mint = Color(0xffe0ecd8);
 const _workspaceGutter = 18.0;
+const _appVersion = '0.1.0';
 
 IconData _controlIcon(IconData material, IconData cupertino) =>
     !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS
@@ -1725,31 +1727,80 @@ class _WorkspaceState extends State<Workspace> {
     icon: Icon(
       _controlIcon(Icons.info_outline_rounded, CupertinoIcons.info_circle),
     ),
-    onPressed: () => showAboutDialog(
-      context: context,
-      applicationName: '모이챗',
-      applicationVersion: '0.1.0',
-      applicationIcon: const _AppMark(),
-      children: [
-        const Text('Kanana 1.5 2.1B Instruct · Q4_K_M\n한국어 오프라인 AI 작업 공간'),
-        if (kIsWeb)
-          TextButton(
-            onPressed: _writing || _readingImage
-                ? null
-                : () {
-                    Navigator.of(context).pop();
-                    _resetPreviewDownload();
-                  },
-            child: const Text('웹 다운로드 다시 테스트'),
-          ),
-        if (_ads?.canShowPrivacyOptions ?? false)
-          TextButton(
-            onPressed: () => unawaited(_ads?.showPrivacyOptions()),
-            child: const Text('광고 개인정보 설정'),
-          ),
-      ],
-    ),
+    onPressed: _openAppInfo,
   );
+
+  void _openAppInfo() {
+    final currentPatch = kIsWeb ? null : ShorebirdUpdater().readCurrentPatch();
+    showDialog<void>(
+      context: context,
+      anchorPoint: MediaQuery.sizeOf(context).topRight(Offset.zero),
+      builder: (dialogContext) => AlertDialog(
+        insetPadding: const EdgeInsets.all(24),
+        scrollable: true,
+        title: const Row(
+          children: [
+            _AppMark(),
+            SizedBox(width: 12),
+            Expanded(child: Text('모이챗')),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('앱 버전 $_appVersion'),
+            if (currentPatch != null)
+              FutureBuilder<Patch?>(
+                future: currentPatch,
+                builder: (context, snapshot) => switch (snapshot.data) {
+                  final Patch patch => Text('OTA 패치 ${patch.number}'),
+                  null => const SizedBox.shrink(),
+                },
+              ),
+            const Divider(height: 24),
+            Text('사용 모델', style: Theme.of(dialogContext).textTheme.titleSmall),
+            const SizedBox(height: 4),
+            const Text('Kanana 1.5 2.1B Instruct'),
+            Text(
+              '양자화 Q4_K_M',
+              style: Theme.of(dialogContext).textTheme.bodySmall,
+            ),
+            if (kIsWeb)
+              TextButton(
+                onPressed: _writing || _readingImage
+                    ? null
+                    : () {
+                        Navigator.of(dialogContext).pop();
+                        _resetPreviewDownload();
+                      },
+                child: const Text('웹 다운로드 다시 테스트'),
+              ),
+            if (_ads?.canShowPrivacyOptions ?? false)
+              TextButton(
+                onPressed: () => unawaited(_ads?.showPrivacyOptions()),
+                child: const Text('광고 개인정보 설정'),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => showLicensePage(
+              context: dialogContext,
+              applicationName: '모이챗',
+              applicationVersion: _appVersion,
+              applicationIcon: const _AppMark(),
+            ),
+            child: const Text('라이선스 보기'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('닫기'),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _banner() {
     final ads = _ads;
