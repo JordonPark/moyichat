@@ -126,7 +126,6 @@ class Workspace extends StatefulWidget {
 
 class _WorkspaceState extends State<Workspace> {
   static const _layoutChannel = MethodChannel('moyichat/layout');
-  static const _toolbarWidth = 52.0;
   static const _maxAttachments = 10;
   static const _previewBytes = 24000000;
   static const _previewTick = Duration(milliseconds: 160);
@@ -174,6 +173,7 @@ class _WorkspaceState extends State<Workspace> {
   double? _followTarget;
   bool _iosCompactWidth = false;
   AxisDirection? _iosToolbarEdge;
+  Rect? _iosToolbarFrame;
 
   @override
   void initState() {
@@ -210,10 +210,25 @@ class _WorkspaceState extends State<Workspace> {
       'right' => AxisDirection.right,
       _ => null,
     };
-    if (_iosCompactWidth == compact && _iosToolbarEdge == edge) return;
+    final frame = switch (data['toolbarFrame']) {
+      [final num x, final num y, final num width, final num height] =>
+        Rect.fromLTWH(
+          x.toDouble(),
+          y.toDouble(),
+          width.toDouble(),
+          height.toDouble(),
+        ),
+      _ => null,
+    };
+    if (_iosCompactWidth == compact &&
+        _iosToolbarEdge == edge &&
+        _iosToolbarFrame == frame) {
+      return;
+    }
     setState(() {
       _iosCompactWidth = compact;
       _iosToolbarEdge = edge;
+      _iosToolbarFrame = frame;
     });
   }
 
@@ -1139,10 +1154,11 @@ class _WorkspaceState extends State<Workspace> {
         safeArea: safeArea,
         features: MediaQuery.displayFeaturesOf(context),
         compactWidth: _iosCompactWidth,
-        toolbarWidth: _iosToolbarEdge == null ? 0 : _toolbarWidth,
         keyboardHeight: keyboardHeight,
+        toolbarEdge: _iosToolbarEdge,
+        systemToolbarFrame: _iosToolbarFrame,
       );
-      final toolbarEdge = layout.showsSideToolbar ? _iosToolbarEdge : null;
+      final toolbarFrame = layout.sideToolbarFrame;
       return _screenTransition(
         context,
         Scaffold(
@@ -1161,40 +1177,56 @@ class _WorkspaceState extends State<Workspace> {
                     ),
                   ),
                 ),
-          body: SafeArea(
-            child: Builder(
-              builder: (context) {
-                final openMenu = layout.showsSidebar
-                    ? null
-                    : Scaffold.of(context).openDrawer;
-                return Row(
-                  textDirection: TextDirection.ltr,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _sideToolbar(toolbarEdge == AxisDirection.left, openMenu),
-                    SizedBox(
-                      width: layout.sidebarWidth,
-                      child: layout.showsSidebar
-                          ? _taskMenu(short: layout.short)
-                          : null,
-                    ),
-                    VerticalDivider(width: layout.sidebarGap, color: _line),
-                    Expanded(
-                      child: Padding(
-                        padding: layout.chatInsets,
-                        child: _workspace(
-                          layout: layout,
-                          openMenu: toolbarEdge == null ? openMenu : null,
-                          sideToolbar: toolbarEdge != null,
-                          keyboardVisible: keyboardHeight > 0,
-                        ),
+          body: Builder(
+            builder: (context) {
+              final openMenu = layout.showsSidebar
+                  ? null
+                  : Scaffold.of(context).openDrawer;
+              return Stack(
+                fit: StackFit.expand,
+                children: [
+                  SafeArea(
+                    child: Padding(
+                      padding: layout.sideToolbarInsets,
+                      child: Row(
+                        textDirection: TextDirection.ltr,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          SizedBox(
+                            width: layout.sidebarWidth,
+                            child: layout.showsSidebar
+                                ? _taskMenu(short: layout.short)
+                                : null,
+                          ),
+                          VerticalDivider(
+                            width: layout.sidebarGap,
+                            color: _line,
+                          ),
+                          Expanded(
+                            child: Padding(
+                              padding: layout.chatInsets,
+                              child: _workspace(
+                                layout: layout,
+                                openMenu: toolbarFrame == null
+                                    ? openMenu
+                                    : null,
+                                sideToolbar: toolbarFrame != null,
+                                keyboardVisible: keyboardHeight > 0,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    _sideToolbar(toolbarEdge == AxisDirection.right, openMenu),
-                  ],
-                );
-              },
-            ),
+                  ),
+                  if (toolbarFrame != null)
+                    Positioned.fromRect(
+                      rect: toolbarFrame,
+                      child: _sideToolbar(openMenu),
+                    ),
+                ],
+              );
+            },
           ),
         ),
       );
@@ -1669,22 +1701,14 @@ class _WorkspaceState extends State<Workspace> {
     ),
   );
 
-  Widget _sideToolbar(bool visible, VoidCallback? openMenu) => SizedBox(
-    width: visible ? _toolbarWidth : 0,
-    child: !visible
-        ? null
-        : ColoredBox(
-            color: _surface,
-            child: ListView(
-              primary: false,
-              padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
-              children: [
-                if (openMenu != null) _menuButton(openMenu),
-                _settingsButton(),
-                _aboutButton(),
-              ],
-            ),
-          ),
+  Widget _sideToolbar(VoidCallback? openMenu) => ListView(
+    primary: false,
+    padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+    children: [
+      if (openMenu != null) _menuButton(openMenu),
+      _settingsButton(),
+      _aboutButton(),
+    ],
   );
 
   Widget _menuButton(VoidCallback openMenu) => IconButton(

@@ -9,15 +9,17 @@ WorkspaceLayout fit(
   EdgeInsets safeArea = EdgeInsets.zero,
   List<DisplayFeature> features = const [],
   bool compactWidth = false,
-  double toolbarWidth = 0,
   double keyboardHeight = 0,
+  AxisDirection? toolbarEdge,
+  Rect? systemToolbarFrame,
 }) => WorkspaceLayout.fit(
   size: size,
   safeArea: safeArea,
   features: features,
   compactWidth: compactWidth,
-  toolbarWidth: toolbarWidth,
   keyboardHeight: keyboardHeight,
+  toolbarEdge: toolbarEdge,
+  systemToolbarFrame: systemToolbarFrame,
 );
 
 void main() {
@@ -34,33 +36,63 @@ void main() {
         size,
         safeArea: safeArea,
         compactWidth: true,
-        toolbarWidth: 52,
+        toolbarEdge: AxisDirection.right,
       ).showsSidebar,
       isFalse,
     );
-    expect(fit(size, safeArea: safeArea, toolbarWidth: 52).sidebarWidth, 220);
+    expect(
+      fit(
+        size,
+        safeArea: safeArea,
+        toolbarEdge: AxisDirection.right,
+      ).sidebarWidth,
+      220,
+    );
   });
 
   test(
-    'moves Duo actions to the header when the status area reduces chat width',
+    'keeps narrow Duo actions in the system bar beneath the right status area',
     () {
       const insets = EdgeInsets.only(right: 84);
+      const toolbar = Rect.fromLTWH(384, 170, 84, 475);
       final narrow = fit(
         const Size(468, 681),
         safeArea: insets,
         compactWidth: true,
-        toolbarWidth: 52,
+        toolbarEdge: AxisDirection.right,
+        systemToolbarFrame: toolbar,
       );
-      final wide = fit(
-        const Size(735, 681),
-        safeArea: insets,
-        toolbarWidth: 52,
-      );
-      expect(narrow.showsSideToolbar, isFalse);
+      expect(narrow.sideToolbarFrame, toolbar);
+      expect(narrow.sideToolbarInsets, EdgeInsets.zero);
       expect(narrow.showsSidebar, isFalse);
-      expect(wide.showsSideToolbar, isTrue);
     },
   );
+
+  test(
+    'keeps actions on the requested edge while UIKit resolves its frame',
+    () {
+      final narrow = fit(
+        const Size(468, 681),
+        safeArea: const EdgeInsets.only(right: 84),
+        compactWidth: true,
+        toolbarEdge: AxisDirection.right,
+      );
+      expect(narrow.sideToolbarFrame?.right, 384);
+      expect(narrow.sideToolbarInsets.right, 52);
+    },
+  );
+
+  test('clips a system bar to the space left by the keyboard', () {
+    final layout = fit(
+      const Size(735, 681),
+      safeArea: const EdgeInsets.only(left: 60),
+      keyboardHeight: 381,
+      toolbarEdge: AxisDirection.left,
+      systemToolbarFrame: const Rect.fromLTWH(0, 120, 66, 560),
+    );
+    expect(layout.sideToolbarFrame, const Rect.fromLTWH(0, 120, 66, 180));
+    expect(layout.sideToolbarInsets.left, 6);
+  });
 
   test('keeps both panes clear of a vertical hinge', () {
     final layout = fit(
