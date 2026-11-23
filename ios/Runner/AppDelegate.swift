@@ -1,4 +1,5 @@
 import Flutter
+import GoogleMobileAds
 import UIKit
 import Vision
 import os
@@ -58,6 +59,11 @@ import os
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
     device.setMethodCallHandler { call, result in
+      if call.method == "configureAdsPrivacy" {
+        MobileAds.shared.requestConfiguration.setPublisherFirstPartyIDEnabled(false)
+        result(nil)
+        return
+      }
       guard call.method == "memory" else {
         result(FlutterMethodNotImplemented)
         return

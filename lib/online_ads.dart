@@ -3,24 +3,30 @@ import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 
 class OnlineAds extends ChangeNotifier with WidgetsBindingObserver {
+  static const _debugAds =
+      kDebugMode &&
+      bool.fromEnvironment('MOYI_SHOW_DEBUG_ADS', defaultValue: true);
   static const _iosTestAds = bool.fromEnvironment('MOYI_ADMOB_IOS_TEST_ADS');
-  bool get showsTestAds => kDebugMode || (Platform.isIOS && _iosTestAds);
+  bool get showsTestAds => _debugAds || (Platform.isIOS && _iosTestAds);
 
-  static final _unit = switch (Platform.operatingSystem) {
-    'android' =>
-      kDebugMode
-          ? 'ca-app-pub-3940256099942544/6300978111'
-          : const String.fromEnvironment('MOYI_ADMOB_ANDROID_BANNER_ID'),
-    'ios' =>
-      kDebugMode || _iosTestAds
-          ? 'ca-app-pub-3940256099942544/2934735716'
-          : const String.fromEnvironment('MOYI_ADMOB_IOS_BANNER_ID'),
-    _ => '',
-  };
+  static final _unit = kDebugMode && !_debugAds
+      ? ''
+      : switch (Platform.operatingSystem) {
+          'android' =>
+            _debugAds
+                ? 'ca-app-pub-3940256099942544/6300978111'
+                : const String.fromEnvironment('MOYI_ADMOB_ANDROID_BANNER_ID'),
+          'ios' =>
+            _debugAds || _iosTestAds
+                ? 'ca-app-pub-3940256099942544/2934735716'
+                : const String.fromEnvironment('MOYI_ADMOB_IOS_BANNER_ID'),
+          _ => '',
+        };
 
   final _connectivity = Connectivity();
   StreamSubscription<List<ConnectivityResult>>? _subscription;
@@ -72,6 +78,11 @@ class OnlineAds extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<bool> _consentAllowsAds() async {
     if (showsTestAds) return true;
+    if (Platform.isIOS) {
+      await const MethodChannel(
+        'moyichat/device',
+      ).invokeMethod<void>('configureAdsPrivacy');
+    }
     final consent = ConsentInformation.instance;
     final update = Completer<bool>();
     consent.requestConsentInfoUpdate(
