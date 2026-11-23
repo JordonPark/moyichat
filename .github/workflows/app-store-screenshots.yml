@@ -1,0 +1,36 @@
+name: MoyiChat App Store screenshots
+
+on: workflow_dispatch
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: xcode-27
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Flutter 3.50.1
+        run: |
+          git clone --depth 1 --branch 3.50.1 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+
+      - name: Build MoyiChat for iOS Simulator
+        run: |
+          xcrun simctl list runtimes
+          flutter pub get --enforce-lockfile
+          flutter build ios --simulator --debug --no-pub \
+            --dart-define=MOYI_SHOW_DEBUG_ADS=false
+
+      - name: Capture iPhone and iPad screens
+        run: python3 .github/scripts/capture-app-store-screenshots.py
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: MoyiChat-App-Store-screenshots
+          path: build/app-store-screenshots/*.jpg
+          if-no-files-found: error
