@@ -13,7 +13,7 @@
 	<key>GADDelayAppMeasurementInit</key>
 	<true/>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>선택한 사진을 챗봇 프로필에 설정하거나 사진 속 글자와 물체를 기기에서 분석하는 데 사용합니다.</string>
+	<string>선택한 사진을 채팅에 첨부해 기기에서 분석하고 대화에 보관하거나 프로필 사진으로 사용합니다.</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>

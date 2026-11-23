@@ -22,6 +22,7 @@ import 'model_store.dart';
 import 'online_ads.dart';
 import 'photo_analysis.dart';
 import 'photo_reply.dart';
+import 'privacy_policy.dart';
 import 'preview_storage_stub.dart'
     if (dart.library.js_interop) 'preview_storage.dart';
 import 'reply_markdown.dart';
@@ -36,7 +37,10 @@ const _pine = Color(0xff20513d);
 const _line = Color(0xffdcded1);
 const _mint = Color(0xffe0ecd8);
 const _workspaceGutter = 18.0;
-const _appVersion = '0.1.0';
+const _appVersion = String.fromEnvironment(
+  'MOYI_APP_VERSION',
+  defaultValue: '0.1.0',
+);
 
 IconData _controlIcon(IconData material, IconData cupertino) =>
     !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS
@@ -143,6 +147,7 @@ class _WorkspaceState extends State<Workspace> {
   final _taskSearch = TextEditingController();
   final _photos = PhotoAnalysis();
   final _ads = kIsWeb ? null : OnlineAds();
+  late final _updater = kIsWeb ? null : ShorebirdUpdater();
   late ChatTask _activeTask = ChatTask.create();
   late final _tasks = <ChatTask>[_activeTask];
   List<ChatMessage> get _messages => _activeTask.messages;
@@ -292,6 +297,10 @@ class _WorkspaceState extends State<Workspace> {
                       applicationName: '모이챗',
                     ),
                     child: const Text('Kanana 모델 라이선스 보기'),
+                  ),
+                  TextButton(
+                    onPressed: () => showPrivacyPolicy(context),
+                    child: const Text('개인정보 처리방침'),
                   ),
                 ],
               ),
@@ -1007,7 +1016,7 @@ class _WorkspaceState extends State<Workspace> {
                     },
                   ),
                   const Divider(height: 20),
-                  if (!kIsWeb)
+                  if (_updater?.isAvailable ?? false)
                     ListTile(
                       contentPadding: EdgeInsets.zero,
                       title: const Text('앱 업데이트'),
@@ -1017,7 +1026,8 @@ class _WorkspaceState extends State<Workspace> {
                         anchorPoint: MediaQuery.sizeOf(
                           context,
                         ).topRight(Offset.zero),
-                        builder: (context) => const AppUpdateDialog(),
+                        builder: (context) =>
+                            AppUpdateDialog(updater: _updater),
                       ),
                     ),
                   Text(
@@ -1127,6 +1137,78 @@ class _WorkspaceState extends State<Workspace> {
       _drafts.removeWhere((id, _) => removedIds.contains(id));
     });
     await _save();
+  }
+
+  Future<void> _confirmClearData(BuildContext from) async {
+    final history = _history;
+    if (history == null || _writing || _readingImage) return;
+    var clearing = false;
+    await showDialog<void>(
+      context: from,
+      barrierDismissible: false,
+      builder: (_) => StatefulBuilder(
+        builder: (context, update) => PopScope(
+          canPop: !clearing,
+          child: AlertDialog(
+            title: const Text('저장된 데이터를 삭제할까요?'),
+            content: const Text('모든 대화, 첨부 사진, 작성 중인 내용과 사용자 지정 프로필을 지워요.'),
+            actions: [
+              TextButton(
+                onPressed: clearing ? null : () => Navigator.pop(context),
+                child: const Text('취소'),
+              ),
+              FilledButton(
+                onPressed: clearing
+                    ? null
+                    : () async {
+                        update(() => clearing = true);
+                        final message = await _clearData(history);
+                        if (!context.mounted) return;
+                        Navigator.pop(context);
+                        if (from.mounted) Navigator.pop(from);
+                        _notify(message);
+                      },
+                child: Text(clearing ? '삭제 중' : '모두 삭제'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<String> _clearData(ChatHistory history) async {
+    final task = ChatTask.create();
+    try {
+      final photosCleared = await history.clear(
+        task.id,
+        generationSize: _manualSize,
+      );
+      if (mounted) {
+        _focus.unfocus();
+        _taskSearchFocus.unfocus();
+        setState(() {
+          _activeTask = task;
+          _tasks
+            ..clear()
+            ..add(task);
+          _drafts.clear();
+          _attachedPhotos.clear();
+          _input.clear();
+          _taskSearch.clear();
+          _task = null;
+          _assistantName = defaultAssistantName;
+          _assistantAvatar = null;
+          _assistantStyle = null;
+        });
+      }
+      return photosCleared
+          ? '저장된 데이터를 삭제했어요.'
+          : '첨부 사진을 모두 지우지 못했어요. 다시 시도해 주세요.';
+    } on Object catch (error) {
+      debugPrint('History clear failure: ${error.runtimeType}');
+      return '데이터를 지우지 못했어요. 다시 시도해 주세요.';
+    }
   }
 
   void _notify(String message) {
@@ -1784,7 +1866,9 @@ class _WorkspaceState extends State<Workspace> {
   );
 
   void _openAppInfo() {
-    final currentPatch = kIsWeb ? null : ShorebirdUpdater().readCurrentPatch();
+    final currentPatch = (_updater?.isAvailable ?? false)
+        ? _updater?.readCurrentPatch()
+        : null;
     showDialog<void>(
       context: context,
       anchorPoint: MediaQuery.sizeOf(context).topRight(Offset.zero),
@@ -1819,6 +1903,15 @@ class _WorkspaceState extends State<Workspace> {
               '양자화 Q4_K_M',
               style: Theme.of(dialogContext).textTheme.bodySmall,
             ),
+            TextButton(
+              onPressed: () => showPrivacyPolicy(dialogContext),
+              child: const Text('개인정보 처리방침'),
+            ),
+            if (_history != null && !_writing && !_readingImage)
+              TextButton(
+                onPressed: () => _confirmClearData(dialogContext),
+                child: const Text('저장된 데이터 삭제'),
+              ),
             if (kIsWeb)
               TextButton(
                 onPressed: _writing || _readingImage

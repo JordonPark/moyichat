@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -26,8 +28,15 @@ class PhotoAnalysis {
         : PhotoFindings(text: null, labels: null, imageBytes: bytes);
   }
 
-  Future<Uint8List?> pickImageBytes() async =>
-      (await _pickImage())?.readAsBytes();
+  Future<Uint8List?> pickImageBytes() async {
+    final image = await _pickImage();
+    if (image == null) return null;
+    try {
+      return await image.readAsBytes();
+    } finally {
+      await _removeIosPickerCopy(image);
+    }
+  }
 
   Future<PhotoFindings?> recoverInterruptedPick() async {
     final response = await _picker.retrieveLostData();
@@ -37,17 +46,33 @@ class PhotoAnalysis {
   }
 
   Future<PhotoFindings> _recognize(XFile image) async {
-    final result = await _channel.invokeMapMethod<String, Object?>(
-      'analyze',
-      image.path,
-    );
-    return PhotoFindings(
-      imageBytes: await image.readAsBytes(),
-      text: (result?['text'] as String?)?.trim(),
-      labels: (result?['labels'] as List<Object?>?)
-          ?.whereType<String>()
-          .toList(),
-    );
+    try {
+      final result = await _channel.invokeMapMethod<String, Object?>(
+        'analyze',
+        image.path,
+      );
+      return PhotoFindings(
+        imageBytes: await image.readAsBytes(),
+        text: (result?['text'] as String?)?.trim(),
+        labels: (result?['labels'] as List<Object?>?)
+            ?.whereType<String>()
+            .toList(),
+      );
+    } finally {
+      await _removeIosPickerCopy(image);
+    }
+  }
+
+  Future<void> _removeIosPickerCopy(XFile image) async {
+    // image_picker_ios returns a private temporary copy with this prefix.
+    if (kIsWeb || !Platform.isIOS || !image.name.startsWith('image_picker_')) {
+      return;
+    }
+    try {
+      await File(image.path).delete();
+    } on FileSystemException {
+      // A temporary-file cleanup error doesn't affect the selected image.
+    }
   }
 }
 

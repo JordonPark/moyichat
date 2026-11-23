@@ -70,12 +70,13 @@ Shorebird로 만든 첫 설치본에서 **사용자 설정 → 앱 업데이트*
 
 AdMob에서 동의 메시지를 설정하면 앱은 UMP에서 광고 요청 가능 여부를 확인한 뒤 비개인화 배너를 요청한다. UMP가 요구하는 지역에서는 앱 정보 화면에 광고 개인정보 설정을 표시한다.
 
-## Mac 없이 TestFlight 빌드
+## Mac 없이 iOS 심사용 빌드
 
-1. Codemagic에서 이 저장소를 연결한다. **MoyiChat iOS build check**로 iOS 컴파일부터 확인할 수 있다.
-2. Apple Developer에서 `com.moyichat.moyichat` 번들 ID를 등록하고 App Store Connect에서 그 ID로 iOS 앱을 만든다.
-3. Codemagic 팀 설정에서 App Store Connect API 키를 **MoyiChat App Store Connect**라는 이름으로 연결한다. iOS 코드 서명 설정에서 이 앱의 App Store 배포 인증서와 프로비저닝 프로파일을 준비한다.
-4. **MoyiChat TestFlight**를 실행한다. 빌드에 성공하면 서명된 IPA가 App Store Connect에 업로드된다. Apple 처리가 끝나면 TestFlight에서 내부 테스트 그룹에 빌드를 추가한다.
+**MoyiChat TestFlight** 워크플로에서 `ota_run_id`를 비워 실행하면 일반 Flutter 엔진의 iOS 1.0 전체 빌드를 서명해 App Store Connect에 올린다. 빌드 번호는 워크플로 실행 번호다. 이 빌드의 업데이트는 App Store를 통해 제공되며, 운영 배너 ID를 지정하지 않으므로 AdMob 광고 요청을 시작하지 않는다. 기존 OTA 아카이브를 내부 테스트용으로 서명할 때는 해당 실행 ID를 입력한다.
+
+- App Store Connect에 [개인정보 처리방침](https://jordonpark.github.io/moyichat-support/privacy/)과 [지원 페이지](https://jordonpark.github.io/moyichat-support/)를 연결한다. 앱은 `assets/privacy-policy.md`를 오프라인으로 표시한다. 공개 처리방침을 수정할 때는 해당 원문을 [지원 페이지 저장소](https://github.com/JordonPark/moyichat-support)의 `privacy.md`에 반영한다.
+- App Review 메모에는 모델 다운로드와 오프라인 동작을 확인하는 절차를 제공한다. 시작 화면에서 **모델 다운로드 → 동의하고 다운로드**로 Hugging Face에서 1.52GB 파일을 받는다. 완료 후 계정 없이 채팅을 보내고, 사진을 첨부해 기기 내 분석을 확인한다. **앱 정보**에서 개인정보 처리방침과 저장된 데이터 삭제 기능을 확인할 수 있다.
+- 공개 제출 전에는 실기기 스크린샷, 연령 등급, 개인정보 공개 항목, 수출 규정 질문과 검토 연락처를 해당 빌드에 맞게 확인한다. [Apple 심사 제출 안내](https://developer.apple.com/help/app-store-connect/manage-submissions-to-app-review/submit-an-app-for-review/)
 
 ## 모델 배포
 

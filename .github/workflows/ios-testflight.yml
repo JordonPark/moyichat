@@ -4,12 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       ota_run_id:
-        description: Successful iOS MoyiChat OTA release run ID
-        required: true
+        description: Optional iOS OTA archive run ID for an internal beta
+        required: false
         type: string
 
 permissions:
   actions: read
+  contents: read
 
 concurrency:
   group: moyichat-testflight
@@ -20,22 +21,39 @@ jobs:
     runs-on: xcode-27
     timeout-minutes: 25
     steps:
-      - name: Sign OTA archive and upload to App Store Connect
+      - uses: actions/checkout@v7
+        if: inputs.ota_run_id == ''
+        with:
+          persist-credentials: false
+
+      - name: Set up Flutter 3.50.1
+        if: inputs.ota_run_id == ''
+        run: |
+          git clone --depth 1 --branch 3.50.1 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+
+      - name: Build the App Store review archive
+        if: inputs.ota_run_id == ''
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          flutter pub get --enforce-lockfile
+          version=1.0
+          flutter build ipa --release --no-codesign --no-pub \
+            --build-name="$version" --build-number="$GITHUB_RUN_NUMBER" \
+            --dart-define="MOYI_APP_VERSION=$version"
+          test -f build/ios/archive/Runner.xcarchive/Info.plist
+          test -z "$(find build/ios/archive/Runner.xcarchive -name shorebird.yaml -print -quit)"
+
+      - name: Retrieve the internal OTA archive
+        if: inputs.ota_run_id != ''
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           OTA_RUN_ID: ${{ inputs.ota_run_id }}
-          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
-          ASC_KEY_ID: ${{ vars.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ vars.ASC_ISSUER_ID }}
-          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
         run: |
           if [[ ! "$OTA_RUN_ID" =~ ^[0-9]+$ ]]; then
             echo '::error::Enter the numeric ID of a successful iOS OTA run.'
-            exit 1
-          fi
-          if [[ ! "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ || ! "$ASC_KEY_ID" =~ ^[A-Z0-9]{10}$ || -z "$ASC_ISSUER_ID" || -z "$ASC_PRIVATE_KEY" ]]; then
-            echo '::error::Configure the App Store Connect team key and Apple team ID.'
             exit 1
           fi
 
@@ -48,18 +66,32 @@ jobs:
           artifact_id=$(jq -er '.id' <<< "$artifact")
           expected_digest=$(jq -er '.digest | sub("^sha256:"; "")' <<< "$artifact")
 
+          mkdir -p build/ios/archive
+          scratch=$(mktemp -d "$RUNNER_TEMP/moyichat-download.XXXXXX")
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$scratch/archive.zip"
+          actual_digest=$(shasum -a 256 "$scratch/archive.zip" | awk '{print $1}')
+          test "$actual_digest" = "$expected_digest"
+          ditto -x -k "$scratch/archive.zip" build/ios/archive
+
+      - name: Sign archive and upload to App Store Connect
+        shell: bash
+        env:
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ vars.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ vars.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          if [[ ! "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ || ! "$ASC_KEY_ID" =~ ^[A-Z0-9]{10}$ || -z "$ASC_ISSUER_ID" || -z "$ASC_PRIVATE_KEY" ]]; then
+            echo '::error::Configure the App Store Connect team key and Apple team ID.'
+            exit 1
+          fi
           umask 077
           scratch=$(mktemp -d "$RUNNER_TEMP/moyichat-sign.XXXXXX")
           key="$scratch/AuthKey_$ASC_KEY_ID.p8"
           trap 'rm -f "$key"' EXIT
           printf '%s\n' "$ASC_PRIVATE_KEY" > "$key"
           unset ASC_PRIVATE_KEY
-
-          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$scratch/archive.zip"
-          actual_digest=$(shasum -a 256 "$scratch/archive.zip" | awk '{print $1}')
-          test "$actual_digest" = "$expected_digest"
-          ditto -x -k "$scratch/archive.zip" "$scratch"
-          archive="$scratch/Runner.xcarchive"
+          archive="$PWD/build/ios/archive/Runner.xcarchive"
           test "$(/usr/libexec/PlistBuddy -c 'Print :ApplicationProperties:CFBundleIdentifier' "$archive/Info.plist")" = com.moyichat.moyichat
           frameworks="$archive/Products/Applications/Runner.app/Frameworks"
           # Give the linker-generated SDK stubs complete bundle signatures

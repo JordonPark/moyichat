@@ -179,6 +179,33 @@ class ChatHistory {
     return next;
   }
 
+  Future<bool> clear(String newTaskId, {GenerationSize? generationSize}) {
+    final empty = ChatWorkspace(
+      activeId: newTaskId,
+      tasks: [ChatTask(id: newTaskId, messages: [])],
+      generationSize: generationSize,
+    );
+    final next = _pendingWrite.then((_) async {
+      await _writeSnapshot(jsonEncode(empty.toJson()));
+      _savedPhotoIds.clear();
+      try {
+        final directory = _photoDirectory;
+        if (directory == null) {
+          await clearPreviewPhotos();
+        } else if (await directory.exists()) {
+          await directory.delete(recursive: true);
+        }
+        return true;
+      } on Exception {
+        return false;
+      } on StateError {
+        return false;
+      }
+    });
+    _pendingWrite = next.then<void>((_) {}).onError((_, _) {});
+    return next;
+  }
+
   Future<List<String>> storePhotos(Iterable<Uint8List> photos) async {
     final ids = <String>[];
     try {
@@ -225,11 +252,13 @@ class ChatHistory {
     }
   }
 
+  Directory? get _photoDirectory => _file == null
+      ? null
+      : Directory.fromUri(_file.parent.uri.resolve('chat-photos/'));
+
   File? _photoFile(String id) {
-    final directory = _file?.parent;
-    return directory == null
-        ? null
-        : File.fromUri(directory.uri.resolve('chat-photos/$id'));
+    final directory = _photoDirectory;
+    return directory == null ? null : File.fromUri(directory.uri.resolve(id));
   }
 
   Set<String> _photoIds(ChatWorkspace workspace) => {

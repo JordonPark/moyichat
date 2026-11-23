@@ -36,6 +36,7 @@ flutter:
     - assets/tasks/
     - assets/kanana-notice.txt
     - assets/apache-2.0.txt
+    - assets/privacy-policy.md
     - assets/preview-groceries.png
     - assets/moyi-notebook.webp
 

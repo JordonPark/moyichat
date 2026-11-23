@@ -73,3 +73,7 @@ Future<Uint8List?> readPreviewPhoto(String id) async =>
 Future<void> deletePreviewPhoto(String id) async {
   await _photoOperation((store) => store.delete(id.toJS), write: true);
 }
+
+Future<void> clearPreviewPhotos() async {
+  await _photoOperation((store) => store.clear(), write: true);
+}

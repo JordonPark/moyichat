@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ page.title | escape }}</title>
+  <style>
+    body { margin: 0; background: #f8f5eb; color: #24352c; font: 1rem/1.75 system-ui, sans-serif; }
+    header, main { max-width: 42rem; margin: 0 auto; padding: 1rem 1.25rem; }
+    header { border-bottom: 1px solid #dcded1; }
+    nav { display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; }
+    a { color: #20513d; text-underline-offset: .18em; overflow-wrap: anywhere; }
+    a:focus-visible { outline: 2px solid #20513d; outline-offset: .2em; }
+    h1, h2 { line-height: 1.35; word-break: keep-all; }
+    h1 { font-size: 1.85rem; }
+    h2 { font-size: 1.2rem; margin-top: 1.65em; }
+  </style>
+</head>
+<body>
+  <header>
+    <nav aria-label="모이챗 지원 메뉴">
+      <a href="{{ '/' | relative_url }}">모이챗 지원</a>
+      <a href="{{ '/privacy/' | relative_url }}">개인정보 처리방침</a>
+    </nav>
+  </header>
+  <main>{{ content }}</main>
+</body>
+</html>

@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:moyichat/chat_history.dart';
 import 'package:moyichat/chat_photo.dart';
+import 'package:moyichat/generation_size.dart';
 import 'package:moyichat/kanana.dart';
 
 void main() {
@@ -36,6 +37,44 @@ void main() {
       expect(await reopened.readPhoto(ids.last), isNull);
     },
   );
+
+  test('clearing storage removes saved records and orphaned photos', () async {
+    final dir = await Directory.systemTemp.createTemp('moyichat-clear-');
+    addTearDown(() => dir.delete(recursive: true));
+    final history = ChatHistory(dir);
+    final [savedId, orphanId] = await history.storePhotos([
+      Uint8List.fromList([1]),
+      Uint8List.fromList([2]),
+    ]);
+    final task = ChatTask.create()
+      ..messages.add(
+        ChatMessage(isUser: true, text: 'Private text', photoIds: [savedId]),
+      );
+    final pending = history.write(
+      ChatWorkspace(
+        activeId: task.id,
+        tasks: [task],
+        assistantName: 'Private name',
+        assistantAvatar: 'AA==',
+      ),
+    );
+    final cleared = history.clear(
+      'new-task',
+      generationSize: GenerationSize.small,
+    );
+    await pending;
+    expect(await cleared, isTrue);
+
+    final reopened = ChatHistory(dir);
+    final workspace = (await reopened.read())!;
+    expect(workspace.activeId, 'new-task');
+    expect(workspace.tasks.single.messages, isEmpty);
+    expect(workspace.assistantName, '모이챗');
+    expect(workspace.assistantAvatar, isNull);
+    expect(workspace.generationSize, GenerationSize.small);
+    expect(await reopened.readPhoto(savedId), isNull);
+    expect(await reopened.readPhoto(orphanId), isNull);
+  });
 
   testWidgets('photo follows a pull and shrinks back to its thumbnail', (
     tester,

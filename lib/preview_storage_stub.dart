@@ -18,3 +18,6 @@ Future<Uint8List?> readPreviewPhoto(String id) =>
 
 Future<void> deletePreviewPhoto(String id) =>
     throw UnsupportedError('Browser storage only');
+
+Future<void> clearPreviewPhotos() =>
+    throw UnsupportedError('Browser storage only');

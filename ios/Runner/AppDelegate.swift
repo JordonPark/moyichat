@@ -31,6 +31,22 @@ import os
         .first
       result(controller?.workspaceLayout)
     }
+    let links = FlutterMethodChannel(
+      name: "moyichat/links",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    links.setMethodCallHandler { call, result in
+      guard call.method == "openHttps" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      guard let value = call.arguments as? String,
+            let url = URL(string: value), url.scheme == "https", url.host != nil else {
+        result(false)
+        return
+      }
+      UIApplication.shared.open(url) { opened in result(opened) }
+    }
     let device = FlutterMethodChannel(
       name: "moyichat/device",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
