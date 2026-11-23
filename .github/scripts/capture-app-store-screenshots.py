@@ -83,9 +83,11 @@ def capture_app(device, model, label, dimensions):
     sim('bootstatus', device, '-b')
     try:
         sim('ui', device, 'appearance', 'light')
-        sim('status_bar', device, 'override', '--time', '9:41', '--dataNetwork', 'wifi',
-            '--wifiMode', 'active', '--wifiBars', '3', '--batteryState', 'unplugged',
-            '--batteryLevel', '100')
+        subprocess.run([
+            'xcrun', 'simctl', 'status_bar', device, 'override', '--time', '9:41',
+            '--dataNetwork', 'wifi', '--wifiMode', 'active', '--wifiBars', '3',
+            '--batteryState', 'discharging', '--batteryLevel', '100',
+        ], check=False)
         sim('install', device, str(APP))
         container = Path(sim_output('get_app_container', device, BUNDLE, 'data'))
         workspace = container / 'Library' / 'Application Support' / 'MoyiChat'
