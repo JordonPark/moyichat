@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import time
@@ -32,19 +33,27 @@ def sim_output(*command):
     return output('xcrun', 'simctl', *command)
 
 
-def select_device(devices, runtime, types, names):
+def select_device(devices, runtimes, types, names):
     for name in names:
         device_type = next((item for item in types if item['name'] == name), None)
         if not device_type:
             continue
-        existing = next(
-            (item for item in devices.get(runtime, []) if item['isAvailable'] and item['name'] == name),
-            None,
-        )
-        if existing:
-            return existing['udid'], name
-        device_id = sim_output('create', name, device_type['identifier'], runtime)
-        return device_id, name
+        for runtime in runtimes:
+            identifier = runtime['identifier']
+            existing = next(
+                (item for item in devices.get(identifier, []) if item['isAvailable'] and item['name'] == name),
+                None,
+            )
+            if existing:
+                return existing['udid'], name
+            supported = runtime.get('supportedDeviceTypes')
+            if supported and device_type['identifier'] not in {item['identifier'] for item in supported}:
+                continue
+            try:
+                device_id = sim_output('create', name, device_type['identifier'], identifier)
+            except subprocess.CalledProcessError:
+                continue
+            return device_id, name
     raise RuntimeError(f'No matching iOS Simulator device for {names}')
 
 
@@ -104,26 +113,28 @@ def capture_app(device, model, label, dimensions):
 def main():
     OUTPUT.mkdir(parents=True, exist_ok=True)
     model = Path(os.environ['RUNNER_TEMP']) / MODEL_NAME
-    subprocess.run(['curl', '--fail', '--location', '--retry', '3', '--max-time', '300',
+    subprocess.run(['curl', '--fail', '--location', '--retry', '2', '--max-time', '540',
                     '--silent', '--show-error', '--output', str(model), MODEL_URL], check=True)
     checksum = output('shasum', '-a', '256', str(model)).split()[0]
     if checksum != MODEL_HASH:
         raise RuntimeError('The simulator model failed integrity verification')
 
     inventory = json.loads(sim_output('list', '--json'))
-    runtime = max(
-        (item for item in inventory['runtimes'] if item['isAvailable'] and '.iOS-' in item['identifier']),
+    runtimes = sorted(
+        (item for item in inventory['runtimes'] if item['isAvailable'] and re.fullmatch(
+            r'com\.apple\.CoreSimulator\.SimRuntime\.iOS-\d+(?:-\d+){1,2}', item['identifier'])),
         key=lambda item: tuple(int(part) for part in item['version'].split('.')),
-    )['identifier']
+        reverse=True,
+    )
     device_specs = [
-        ('iphone', ('iPhone 18 Pro', 'iPhone 17 Pro', 'iPhone 17', 'iPhone 16 Pro', 'iPhone 16'),
+        ('iphone', ('iPhone 16', 'iPhone 18 Pro', 'iPhone 17 Pro', 'iPhone 17', 'iPhone 16 Pro'),
          {(1179, 2556), (1206, 2622)}),
         ('ipad', ('iPad Pro 13-inch (M5)', 'iPad Pro 13-inch (M4)', 'iPad Air 13-inch (M4)',
                   'iPad Air 13-inch (M3)', 'iPad Air 13-inch (M2)'),
          {(2064, 2752), (2048, 2732)}),
     ]
     for label, names, dimensions in device_specs:
-        device, name = select_device(inventory['devices'], runtime, inventory['devicetypes'], names)
+        device, name = select_device(inventory['devices'], runtimes, inventory['devicetypes'], names)
         print(f'Capturing MoyiChat on {name}', flush=True)
         capture_app(device, model, label, dimensions)
 
