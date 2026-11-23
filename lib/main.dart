@@ -10,6 +10,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shorebird_code_push/shorebird_code_push.dart';
 
+import 'ad_report_dialog.dart';
 import 'app_update_dialog.dart';
 import 'assistant_avatar.dart';
 import 'assistant_identity.dart';
@@ -1968,9 +1969,24 @@ class _WorkspaceState extends State<Workspace> {
               padding: const EdgeInsets.only(top: 8, bottom: 2),
               child: Column(
                 children: [
-                  const Text(
-                    '광고',
-                    style: TextStyle(color: _muted, fontSize: 11),
+                  Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    alignment: WrapAlignment.center,
+                    children: [
+                      Text(
+                        ads.showsTestAds ? '테스트 광고' : '광고',
+                        style: const TextStyle(color: _muted, fontSize: 11),
+                      ),
+                      TextButton(
+                        onPressed: () => showAdReportDialog(
+                          context,
+                          adUnitId: ad.adUnitId,
+                          responseId: ad.responseInfo?.responseId,
+                        ),
+                        child: const Text('광고 정보 및 신고'),
+                      ),
+                    ],
                   ),
                   SizedBox(
                     width: ad.size.width.toDouble(),

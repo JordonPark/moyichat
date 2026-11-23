@@ -66,13 +66,13 @@ Shorebird로 만든 첫 설치본에서 **사용자 설정 → 앱 업데이트*
 실제 광고는 배너 ID를 지정한 출시용 빌드에서만 활성화된다.
 
 - Android는 빌드 환경 변수 `MOYI_ADMOB_ANDROID_APP_ID`와 빌드 옵션 `--dart-define=MOYI_ADMOB_ANDROID_BANNER_ID=...`를 설정한다.
-- iOS는 [AdMob.xcconfig](ios/Flutter/AdMob.xcconfig)의 `MOYI_ADMOB_IOS_APP_ID`와 빌드 옵션 `--dart-define=MOYI_ADMOB_IOS_BANNER_ID=...`를 설정한다.
+- iOS 앱 ID는 [AdMob.xcconfig](ios/Flutter/AdMob.xcconfig)에 설정한다. **MoyiChat TestFlight**에서 `advertising=test`를 선택하면 Google의 테스트 배너를 표시하는 내부 테스트 전용 빌드를 만들어 올린다. `advertising=live`를 선택하면 GitHub Actions 변수 `MOYI_ADMOB_IOS_BANNER_ID`를 사용해 운영 배너를 활성화한다. `off`는 광고를 끄는 설정이다.
 
-AdMob에서 동의 메시지를 설정하면 앱은 UMP에서 광고 요청 가능 여부를 확인한 뒤 비개인화 배너를 요청한다. UMP가 요구하는 지역에서는 앱 정보 화면에 광고 개인정보 설정을 표시한다.
+앱은 UMP에서 광고 요청 가능 여부를 확인한 뒤 비개인화 배너를 요청한다. iOS 광고 요청에는 AdMob의 G 광고 콘텐츠 등급을 설정한다. UMP가 요구하는 지역에서는 앱 정보 화면에 광고 개인정보 설정을 표시한다. 사용자는 배너 옆 **광고 정보 및 신고**에서 광고 식별 정보를 복사하거나 iOS에서 신고 이메일을 작성할 수 있다.
 
 ## Mac 없이 iOS 심사용 빌드
 
-**MoyiChat TestFlight** 워크플로에서 `ota_run_id`를 비워 실행하면 일반 Flutter 엔진의 iOS 1.0 전체 빌드를 서명해 App Store Connect에 올린다. 빌드 번호는 워크플로 실행 번호다. 이 빌드의 업데이트는 App Store를 통해 제공되며, 운영 배너 ID를 지정하지 않으므로 AdMob 광고 요청을 시작하지 않는다. 기존 OTA 아카이브를 내부 테스트용으로 서명할 때는 해당 실행 ID를 입력한다.
+**MoyiChat TestFlight** 워크플로에서 `ota_run_id`를 비워 실행하면 일반 Flutter 엔진의 iOS 1.0 전체 빌드를 서명해 App Store Connect에 올린다. 빌드 번호는 워크플로 실행 번호다. 정식 버전의 업데이트는 App Store를 통해 제공된다. 기존 OTA 아카이브를 내부 테스트용으로 서명할 때는 해당 실행 ID를 입력한다.
 
 - App Store Connect에 [개인정보 처리방침](https://jordonpark.github.io/moyichat-support/privacy/)과 [지원 페이지](https://jordonpark.github.io/moyichat-support/)를 연결한다. 앱은 `assets/privacy-policy.md`를 오프라인으로 표시한다. 공개 처리방침을 수정할 때는 해당 원문을 [지원 페이지 저장소](https://github.com/JordonPark/moyichat-support)의 `privacy.md`에 반영한다.
 - App Review 메모에는 모델 다운로드와 오프라인 동작을 확인하는 절차를 제공한다. 시작 화면에서 **모델 다운로드 → 동의하고 다운로드**로 Hugging Face에서 1.52GB 파일을 받는다. 완료 후 계정 없이 채팅을 보내고, 사진을 첨부해 기기 내 분석을 확인한다. **앱 정보**에서 개인정보 처리방침과 저장된 데이터 삭제 기능을 확인할 수 있다.

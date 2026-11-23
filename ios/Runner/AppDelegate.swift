@@ -36,12 +36,18 @@ import os
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
     links.setMethodCallHandler { call, result in
-      guard call.method == "openHttps" else {
+      guard call.method == "openHttps" || call.method == "openSupportMail" else {
         result(FlutterMethodNotImplemented)
         return
       }
-      guard let value = call.arguments as? String,
-            let url = URL(string: value), url.scheme == "https", url.host != nil else {
+      guard let value = call.arguments as? String, let url = URL(string: value) else {
+        result(false)
+        return
+      }
+      let allowed = call.method == "openHttps"
+        ? url.scheme == "https" && url.host != nil
+        : url.scheme == "mailto" && value.hasPrefix("mailto:moyichats@gmail.com?")
+      guard allowed else {
         result(false)
         return
       }

@@ -7,13 +7,16 @@ import 'package:flutter/widgets.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 
 class OnlineAds extends ChangeNotifier with WidgetsBindingObserver {
+  static const _iosTestAds = bool.fromEnvironment('MOYI_ADMOB_IOS_TEST_ADS');
+  bool get showsTestAds => kDebugMode || (Platform.isIOS && _iosTestAds);
+
   static final _unit = switch (Platform.operatingSystem) {
     'android' =>
       kDebugMode
           ? 'ca-app-pub-3940256099942544/6300978111'
           : const String.fromEnvironment('MOYI_ADMOB_ANDROID_BANNER_ID'),
     'ios' =>
-      kDebugMode
+      kDebugMode || _iosTestAds
           ? 'ca-app-pub-3940256099942544/2934735716'
           : const String.fromEnvironment('MOYI_ADMOB_IOS_BANNER_ID'),
     _ => '',
@@ -68,7 +71,7 @@ class OnlineAds extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<bool> _consentAllowsAds() async {
-    if (kDebugMode) return true;
+    if (showsTestAds) return true;
     final consent = ConsentInformation.instance;
     final update = Completer<bool>();
     consent.requestConsentInfoUpdate(
@@ -92,7 +95,7 @@ class OnlineAds extends ChangeNotifier with WidgetsBindingObserver {
       final eligible = await (_permission ??= _consentAllowsAds());
       if (!eligible) _permission = null;
       if (_closed || !_online || !eligible) return;
-      await (_sdk ??= MobileAds.instance.initialize());
+      await (_sdk ??= _initializeSdk());
       if (_closed || !_online) return;
       final ad = BannerAd(
         adUnitId: _unit,
@@ -120,6 +123,16 @@ class OnlineAds extends ChangeNotifier with WidgetsBindingObserver {
     } finally {
       _requesting = false;
     }
+  }
+
+  Future<InitializationStatus> _initializeSdk() async {
+    final sdk = MobileAds.instance;
+    if (Platform.isIOS) {
+      await sdk.updateRequestConfiguration(
+        RequestConfiguration(maxAdContentRating: MaxAdContentRating.g),
+      );
+    }
+    return sdk.initialize();
   }
 
   Future<void> showPrivacyOptions() async {
