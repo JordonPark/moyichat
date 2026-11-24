@@ -46,7 +46,7 @@ jobs:
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
           flutter pub get --enforce-lockfile
-          version=1.0.1
+          version=1.0.2
           defines=("--dart-define=MOYI_APP_VERSION=$version")
           case "$ADS_MODE" in
             off) ;;
