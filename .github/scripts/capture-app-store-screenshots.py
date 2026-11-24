@@ -79,6 +79,18 @@ def capture(device, name, dimensions):
     png.unlink()
 
 
+def example_task(identifier, name, question, answer, *, parent=None, photo=None):
+    message = {'user': True, 'text': question}
+    if photo:
+        message['photoIds'] = [photo]
+    task = {'id': identifier, 'name': name, 'messages': [
+        message, {'user': False, 'text': answer},
+    ]}
+    if parent:
+        task['parentId'] = parent
+    return task
+
+
 def capture_app(device, model, label, dimensions):
     sim('bootstatus', device, '-b')
     try:
@@ -95,19 +107,40 @@ def capture_app(device, model, label, dimensions):
         photos.mkdir(parents=True, exist_ok=True)
         use_model(model, workspace / MODEL_NAME)
         shutil.copy2(PHOTO, photos / PHOTO_ID)
-        primary = {'id': 'moyichat-start', 'messages': []}
-        example = {'id': 'moyichat-example', 'name': '장보기 메모', 'messages': [
-            {'user': True, 'text': '사진에 있는 장보기 목록을 정리해 줘.', 'photoIds': [PHOTO_ID]},
-            {'user': False, 'text': '장보기 목록이에요.\n\n- 사과 2개\n- 우유 1개'},
-        ]}
-        state = {'activeId': primary['id'], 'tasks': [primary, example], 'generationSize': 'small'}
+        home = {'id': 'moyichat-start', 'messages': []}
+        offline = example_task(
+            'offline', '기차 여행', '기차 안에서 할 일을 가볍게 정리해 줘.',
+            '1. 도착해서 갈 곳을 하나 골라요.\n2. 여행 메모를 정리해요.\n3. 쉴 시간도 남겨 둬요.',
+        )
+        notes = example_task(
+            'notes', '회의 메모', '회의 메모를 요약해 줘. 목요일까지 초안, 금요일에 함께 검토.',
+            '• 목요일까지 초안 작성\n• 금요일에 초안 함께 검토',
+        )
+        writing = example_task(
+            'writing', '답장 초안', '“오늘 조금 늦어요”를 정중한 문자로 다듬어 줘.',
+            '안녕하세요. 오늘 약속 시간보다 조금 늦을 것 같아 미리 연락드려요. 기다리게 해서 죄송합니다.',
+        )
+        photo = example_task(
+            'photo', '장보기 메모', '사진에 있는 장보기 목록을 정리해 줘.',
+            '장보기 목록이에요.\n\n- 사과 2개\n- 우유 1개', photo=PHOTO_ID,
+        )
+        child = example_task(
+            'child', '여행 체크리스트', '이제 도착 전에 챙길 것만 알려줘.',
+            '• 내릴 역과 도착 시각 확인\n• 좌석과 선반에 놓은 짐 챙기기\n• 목적지까지 이동 경로 확인',
+            parent='offline',
+        )
+        tasks = [home, offline, notes, writing, photo, child]
+        scenes = (
+            [('01-offline', offline), ('02-notes', notes), ('03-writing', writing),
+             ('04-photo', photo), ('05-child', child)]
+            if label == 'iphone' else [('01-home', home), ('02-photo-chat', photo)]
+        )
         history = workspace / 'chat.json'
-        history.write_text(json.dumps(state, ensure_ascii=False), encoding='utf-8')
-        capture(device, f'{label}-01-home', dimensions)
-        sim('terminate', device, BUNDLE)
-        state['activeId'] = example['id']
-        history.write_text(json.dumps(state, ensure_ascii=False), encoding='utf-8')
-        capture(device, f'{label}-02-photo-chat', dimensions)
+        for name, active in scenes:
+            state = {'activeId': active['id'], 'tasks': tasks, 'generationSize': 'small'}
+            history.write_text(json.dumps(state, ensure_ascii=False), encoding='utf-8')
+            capture(device, f'{label}-{name}', dimensions)
+            sim('terminate', device, BUNDLE)
     finally:
         subprocess.run(['xcrun', 'simctl', 'shutdown', device], check=False)
 

@@ -46,7 +46,7 @@ jobs:
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
           flutter pub get --enforce-lockfile
-          version=1.0
+          version=1.0.1
           defines=("--dart-define=MOYI_APP_VERSION=$version")
           case "$ADS_MODE" in
             off) ;;
@@ -65,6 +65,9 @@ jobs:
             "${defines[@]}"
           test -f build/ios/archive/Runner.xcarchive/Info.plist
           test -z "$(find build/ios/archive/Runner.xcarchive -name shorebird.yaml -print -quit)"
+          app_plist=build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app/Info.plist
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDevelopmentRegion' "$app_plist")" = ko
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleLocalizations:0' "$app_plist")" = ko
 
       - name: Retrieve the internal OTA archive
         if: inputs.ota_run_id != ''
