@@ -64,9 +64,9 @@ def use_model(model, destination):
         shutil.copy2(model, destination)
 
 
-def capture(device, name, dimensions):
+def capture(device, name, dimensions, *, first_launch):
     sim('launch', '--terminate-running-process', device, BUNDLE)
-    time.sleep(20)
+    time.sleep(60 if first_launch else 25)
     png = OUTPUT / f'{name}.png'
     jpg = OUTPUT / f'{name}.jpg'
     sim('io', device, 'screenshot', str(png))
@@ -136,10 +136,10 @@ def capture_app(device, model, label, dimensions):
             if label == 'iphone' else [('01-home', home), ('02-photo-chat', photo)]
         )
         history = workspace / 'chat.json'
-        for name, active in scenes:
+        for index, (name, active) in enumerate(scenes):
             state = {'activeId': active['id'], 'tasks': tasks, 'generationSize': 'small'}
             history.write_text(json.dumps(state, ensure_ascii=False), encoding='utf-8')
-            capture(device, f'{label}-{name}', dimensions)
+            capture(device, f'{label}-{name}', dimensions, first_launch=index == 0)
             sim('terminate', device, BUNDLE)
     finally:
         subprocess.run(['xcrun', 'simctl', 'shutdown', device], check=False)
